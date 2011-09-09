@@ -31,6 +31,8 @@
                  [incanter/incanter-excel "1.2.3"]
                  ]
 
+  :disable-deps-clean true
+
   :dev-dependencies [[swank-clojure "1.3.2"]
                      [lein-clojars "0.6.0"]
                      [jline "0.9.94"]
