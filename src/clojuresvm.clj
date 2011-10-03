@@ -91,8 +91,8 @@
 (defn svmloadmodel [file]
   (svm/svm_load_model file))
 
-(defn svmpredict [model test-set]
+(defn svmpredict [model-file test-set]
   (for [ts (svm_node-toarray test-set)]
     (do
       ;;(doseq [i ts] (println (.index i) (.value i) ""))
-      (svm/svm_predict model ts))))
+      (svm/svm_predict (svmloadmodel model-file) ts))))
