@@ -4,7 +4,8 @@
             [incanter.stats :as stats]
             [incanter.core :as math]
             [clojure.set :as set]
-            [simplesvm :as ssvm])
+            [simplesvm :as ssvm]
+            [clojure.java.shell :as shell])
   (:use [clojure.contrib.condition
          :only [raise handler-case *condition*
                 print-stack-trace stack-trace-info]]
@@ -13,7 +14,8 @@
          :only (cl-format compile-format)]
 
         net.n01se.clojure-jna
-        refold))
+        refold
+        libsvm2weka))
 
 (def possible_pairs {"AU" 1 "UA" 1 "GC" 1 "CG" 1 "GU" 1 "UG" 1} )
 
@@ -49,6 +51,7 @@
 (defn energy-of-seq [profile]
   (jna-invoke Void RNA/read_parameter_file "/home/kitia/Desktop/ViennaRNA-2.0.0/rna_andronescu2007.par")
   (jna-invoke Integer RNA/set_ribo_switch 1)
+  (jna-invoke Void RNA/update_fold_params)
    (map (fn [inseq]
           (let [struct (profile :structure)
                 [i st] (remove-gaps inseq struct)
@@ -67,6 +70,7 @@
 (defn energy-of-aliseq [profile]
   (jna-invoke Void RNA/read_parameter_file "/home/kitia/Desktop/ViennaRNA-2.0.0/rna_andronescu2007.par")
   (jna-invoke Integer RNA/set_ribo_switch 1)
+  (jna-invoke Void RNA/update_alifold_params)
   (let [struct (profile :structure)
         inseqs (profile :seqs)
         [btr bbuf] (jna-malloc (count (first inseqs)))
@@ -76,11 +80,11 @@
                                (count inseqs) 
                                etr)]
     ;; (println "e =" e)
-    (println "e = " (.getFloat etr 0) (.getFloat etr 4))
+    (println "e = " (+ (.getFloat etr 0) (.getFloat etr 4)) "=" (.getFloat etr 0) "+" (.getFloat etr 4))
     ;; (doseq [i inseqs] 
     ;;   (println i))
     ;; (println struct)
-    e))
+    (+ (.getFloat etr 0) (.getFloat etr 4))))
 
 (defn sci [Ealign Eavg]
   (prn "Ea" Ealign "E" Eavg)
@@ -89,6 +93,8 @@
 (defn sum [m]
   (apply + (vals m)))
 
+;;expected number of base pairs given frequencies of a base a position
+;;i and j
 (defn expected_qij [prob1 prob2]
   (for [k1 (keys prob1)
         k2 (keys prob2)]
@@ -100,16 +106,42 @@
             (assoc m k (/ v (sum freq-map))))
           {} freq-map))
 
+;;calculates the information for each base in a column and returns a
+;;map where key=base value=information
+(defn information_i [p fract-map i]
+  (reduce (fn [m [b q]]
+            (if-not (= b ".")
+              (assoc m b (* 1 q (math/log2 (/ q (get p b 0.25)))))
+              (assoc m b (* 1 q (math/log2 q)))))
+          {} (second (nth fract-map i))))
+
+;;returns only the information in columns that are base paired
+;;according to the alignment
+(defn information_only_bp [info bp-loc]
+  (loop [y bp-loc
+         v []]
+    (if (seq y)
+      (recur (rest y)
+             (reduce (fn [v i] 
+                       (if (= (first i) (ffirst y))
+                         (conj v (second i))
+                         v))
+                     v info))
+      v)))
+
+;;calculates the information of all columns in an alignment of sequences
 (defn information [profile]
   (let [fract-map (profile :fract)
-        bp-loc (profile :pairs)
-        q {}]
-    (stats/mean (for [i (keys bp-loc)]
-                  (sum (reduce (fn [m [b p]]
-                                 (assoc m b (* -1 p (math/log2 (/ p (get q b 1))))))
-                               {} (second (nth fract-map i))))))))
-  
-(defn fract_comp_ij [inseqs structure bp-loc]
+        p (profile :background)
+        len (count (first (profile :seqs)))]
+    (for [i (range len)]
+      [i (sum (information_i p fract-map i))])
+    ))
+
+;;calculates the fraction of base pairs at i and j where there is a
+;;base pair and returns a map where key=[i j] value=faction
+;;complementary bp
+(defn fract_comp_ij [inseqs bp-loc]
   (let [freqs (partition 2 (interleave (range (count (first inseqs)))
                                        (apply map vector (map #(rest (str/split #"" %)) inseqs))))]
     (reduce (fn [m [i j]]
@@ -118,23 +150,29 @@
                                         (get possible_pairs (str b1 b2) 0))
                                       (second (nth freqs i)) (second (nth freqs j))))
                         (count inseqs))))
-         {}  bp-loc)))
+            {}  bp-loc)))
+
+(defn mutual_info_ij [q fract-freqs i j]
+  (let [qij (get q [i j])
+        Eqij (apply + (expected_qij (second (nth fract-freqs i)) (second (nth fract-freqs j))))
+        ]
+    (if (= qij 1)
+      (* -1 (math/log2 Eqij))
+      (+ (* qij (math/log2 (/ qij Eqij))) (* (- 1 qij) (math/log2 (/ (- 1 qij)(- 1 Eqij))))))))
 
 (defn mutual_info [profile]
-  (let [struct (profile :structure)
-        s (profile :seqs)
+  (let [s (profile :seqs)
         bp-loc (profile :pairs)
-        q (fract_comp_ij s struct bp-loc)
+        len (count (first s))
+        all-loc (for [i (range len)
+                      j (range len)]
+                  [i j])
+        q (fract_comp_ij s bp-loc) ;;fraction of bp ij where
+        ;;there is complementarity
         fract-freqs (profile :fract)]
-    (stats/mean
-     (map (fn [[i j]]
-            (let [qij (get q [i j])
-                  Eqij (apply + (expected_qij (second (nth fract-freqs i)) (second (nth fract-freqs j))))
-                  ]
-              (if (= qij 1)
-                (* -1 (math/log2 Eqij))
-                (+ (* qij (math/log2 (/ qij Eqij))) (* (- 1 qij) (math/log2 (/ (- 1 qij)(- 1 Eqij))))))))
-          bp-loc))))
+    (map (fn [[i j]]
+           (mutual_info_ij q fract-freqs i j))
+         bp-loc)))
 
 (defn pairwise_identity [inseqs]
   (stats/mean (for [i (range (count inseqs))
@@ -172,11 +210,12 @@
          (iterate inc 1) s base-comp)))
 
 (defn zscore [profile]
-  (io/with-out-writer "/home/kitia/bin/libsvm-3.1/zscore-out.txt"
+  (io/with-out-writer "/home/kitia/bin/libsvm-3.1/zscore-out1.txt"
     (doseq [i (base_comp_features profile)]
       (println i)))
-  (let [mu (ssvm/predict "/home/kitia/bin/libsvm-3.1/mean1.txt.model" "/home/kitia/bin/libsvm-3.1/zscore-out.txt")
-        sdev (ssvm/predict "/home/kitia/bin/libsvm-3.1/sd1.txt.model" "/home/kitia/bin/libsvm-3.1/zscore-out.txt")]
+  (libsvm2weka/txt2csv "/home/kitia/bin/libsvm-3.1/zscore-out1.txt" "/home/kitia/bin/libsvm-3.1/zscore-out1.csv")
+  (let [mu (getpredicted (libsvm2weka/wekaNN "/home/kitia/mean1.csv" "/home/kitia/bin/libsvm-3.1/zscore-out1.csv"))
+        sdev (getpredicted (libsvm2weka/wekaNN "/home/kitia/sd1.csv" "/home/kitia/bin/libsvm-3.1/zscore-out1.csv"))]
     (map (fn [x mean sdev]
            ;;(prn "x" x "mean" mean "sigma" sdev)
            (/ (- x mean) sdev))
@@ -203,8 +242,8 @@
   (let [m (profile (read-sto f))]
     (prn "zscore" (stats/mean (zscore m)))
     (prn "sci" (sci (energy-of-aliseq m) (energy-of-seq m)))
-    (prn "information" (information m))
-    (prn "mutual info" (mutual_info m))
+    (prn "information" (stats/mean (information_only_bp (information m) (m :pairs))))
+    (prn "mutual info" (stats/mean (mutual_info m)))
     (prn "pairwise identity" (pairwise_identity (m :seqs)))
     (prn "number of seqs" (count (m :seqs)))))
 

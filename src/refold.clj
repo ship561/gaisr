@@ -7,29 +7,36 @@
   (loop [c (rest (str/split #"" structure))
          s [] ;;stack structure which stores the location of the
          ;;opening ( so that closing parens pop location
-         table []
+         table {}
          i 0]
     ;;(prn "c=" c s table)
     (if(seq c)
       (do 
         (cond
          ;;opening bracket for structure stores location in stack
-         (= (first c) "(") 
-         (recur (rest c) (cons i s) (cons i table) (inc i))
+         (or (= (first c) "(") (= (first c) "<"))
+         ;;(recur (rest c) (cons i s) (cons i table) (inc i))
+         (recur (rest c) (cons i s) table (inc i))
 
-         ;;closing paren pops location off stack
-         (= (first c) ")") 
-         (recur (rest c) (rest s) (cons i table) (inc i))
+         ;;closing paren pops location off stack and creates a key
+         ;;value pair where the 2 base paired bases are put into the map
+         (or (= (first c) ")") (= (first c) ">"))
+         (recur (rest c)
+                (rest s)
+                (assoc table (first s) i
+                       i (first s))
+                (inc i))
 
          ;;gap does nothing
          :else (recur (rest c) s table (inc i))))
-      (apply assoc {}
-             (interleave (reverse table) table)))))
+      table ;;returns a map
+      )))
 
 ;;attempts to remove gaps from a sequence and corresponding structure
-;;and tries to ensure equal number of ( and ). 
+;;and tries to ensure equal number of ( and ). Takes 2 strings, must
+;;be upper-case
 (defn remove-gaps
-  ([inseq] (remove-gaps inseq (apply str (take (count seq) (cycle ".")))))
+  ([inseq] (remove-gaps inseq (apply str (take (count inseq) (cycle ".")))))
   
   ([inseq struct]
      (let [table (make_pair_table struct)
@@ -40,7 +47,7 @@
          (if (< i (count inseq))
            (let [c (.substring inseq i (inc i)) ;;char at position i
                  compi (get table i -1)] ;;where i is base paired to
-             ;; (prn "i" i "compi" compi "c" c "length" (count st))
+             ;; (prn "i=" i "compi=" compi "c=" c "length=" (count st))
              ;; (prn inseq)
              ;; (prn st)
              (cond
