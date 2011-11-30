@@ -1,5 +1,57 @@
 
-(in-ns 'edu.bc.bio.crutch-csv)
+(in-ns 'edu.bc.bio.R-be)
+
+
+
+(let [base "/data2/Bio/Training/MoStos"
+      RFAM  "/data2/Bio/RFAM"
+      dir-f-pairs
+      (keep (fn[f]
+              (let [mosto-dir (fs/join base (first (str/split #"-" f)))]
+                (when (not (fs/directory? mosto-dir)) [mosto-dir f])))
+            (map fs/basename (sort (fs/directory-files RFAM ".sto"))))]
+  (doseq [[d f] dir-f-pairs]
+    (fs/mkdir d)
+    (fs/copy (fs/join RFAM f) (fs/join d f))))
+
+(def *cur-search*
+     (future (catch-all
+              (doall (cms&hitfnas->cmsearch-out
+                      "/data2/Bio/Training/MoStos/RF01054/RF01054.sto.cm"
+                      (directory-files "/data2/Bio/Training/FastaFiles" ".fna")
+                      :eval 1.0)))))
+
+(pds/gen-aligned-training-sets
+ "/data2/Bio/Training/MoStos/ECS4" :ev-value 0.00001)
+
+(let [base "/data2/Bio/Training/MoStos"
+      dirs (sort (filter fs/directory? (fs/directory-files base "")))
+      names (map fs/basename dirs)]
+  (filter (fn [d]
+	    (and (not-empty (fs/directory-files d ".cmsearch.out"))
+		 (reduce #(and %1 (not (fs/empty? %2)))
+			 true (fs/directory-files d ".cmsearch.out"))
+		 (empty? (fs/directory-files d ".cmsearch.csv"))))
+	  dirs))
+
+
+
+
+(def jdkbin (fs/listdir "/opt/Java/java/bin/"))
+(def altbin (fs/listdir "/etc/alternatives/"))
+
+(io/with-out-writer (fs/fullpath "~/fix-java" )
+  (println "#!/bin/tcsh")
+  (println)
+  (doseq [x (map #(str "rm -f " %)
+                 (sort (set/intersection (set jdkbin) (set altbin))))]
+    (println x))
+  (doseq [x (let [base "/opt/Java/java/bin/"]
+              (map #(str "ln -s " base % " " %)
+                   (sort (set/intersection (set jdkbin) (set altbin)))))]
+    (println x)))
+
+
 
 (def *jsa* nil)
 
@@ -8,6 +60,19 @@
     (sql/with-connection mysql-ds
       (sql/with-query-results qresults [stmt]
         (doall qresults)))))
+
+
+
+
+(doseq [i (range 1 133)]
+  (let [stmt (str "select t.name,sfqv.* from term as t, seqfeature_qualifier_value as sfqv where t.term_id=sfqv.term_id and sfqv.term_id=" i " limit 10;")]
+    (sql/with-connection mysql-ds
+      (sql/with-query-results qresults [stmt]
+        (println "\n" stmt ":")
+        (doseq [m (doall qresults)]
+          (println i (m :name) "==>" (m :seqfeature_id) "," (m :value)))))))
+
+
 
 (first *jsa*)
 (count *jsa*)
