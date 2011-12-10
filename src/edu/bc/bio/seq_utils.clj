@@ -76,17 +76,27 @@
 
 (defn join-sto-fasta-lines [infilespec origin]
   (let [[seq-lines gc-lines] (sto-GC-and-seq-lines infilespec)
+        
         gc-lines (if (not= origin "")
                    (concat (take 1 gc-lines) [origin] (drop 1 gc-lines))
                    gc-lines)
-        recombined-seqs (reduce
-                         (fn [m l]
-                           (let [[nm sq] (str/split #"\s{2,}+" l)
-                                 prev (get m nm [(gen-uid) ""])]
-                             (assoc m  nm [(first prev)
-                                           (str (second prev) sq)])))
-                         {} seq-lines)]
-    [gc-lines (sort-by #(-> % second first) (vec recombined-seqs))]))
+        recombined-seqs (sort-by
+                         #(-> % second first)
+                         (vec
+                          (reduce
+                           (fn [m l]
+                             (let [[nm sq] (if (.startsWith l "#")
+                                             (str/split #"\s{2,}+" l)
+                                             (str/split #"\s+" l))
+                                   prev (get m nm [(gen-uid) ""])]
+                               (assoc m  nm [(first prev)
+                                             (str (second prev) sq)])))
+                           {} seq-lines)))
+        {seq-lines false cons-lines true} (group-by
+                                           #(or (.startsWith (first %) "//")
+                                                (.startsWith (first %) "#"))
+                                           recombined-seqs)]
+    [gc-lines seq-lines cons-lines]))
 
 
 (defn join-sto-fasta-file
@@ -96,15 +106,23 @@
 
   [in-filespec out-filespec
    & {origin :origin :or {origin ""}}]
-  (let [[gc-lines seq-lines] (join-sto-fasta-lines in-filespec origin)]
+  (let [[gc-lines seq-lines cons-lines] (join-sto-fasta-lines in-filespec origin)]
     (io/with-out-writer (fs/fullpath out-filespec)
       (doseq [gcl gc-lines] (println gcl))
       (doseq [sl seq-lines]
         (let [[nm [id sq]] sl]
+          (cl-format true "~A~40T~A~%" nm sq)))
+      (doseq [cl cons-lines]
+        (let [[nm [id sq]] cl]
           (cl-format true "~A~40T~A~%" nm sq))))))
 
 
-
+;; (defn check-sto [sto]
+;;   (let [valid-symbols #{"A" "C" "G" "T" "U"
+;;                         "-" "." ":"
+;;                         "a" "b" "B"
+;;                         "(" ")" "<" ">"}
+        
 
 ;;; ----------------------------------------------------------------------
 ;;; BLAST functions.  These are currently based on NCBI BLAST+ (which

@@ -15,9 +15,11 @@
 
         net.n01se.clojure-jna
         refold
-        libsvm2weka))
+        libsvm2weka
+        edu.bc.bio.seq-utils))
 
 (def possible_pairs {"AU" 1 "UA" 1 "GC" 1 "CG" 1 "GU" 1 "UG" 1} )
+(def base #{"A" "C" "G" "U"} )
 
 (defn jna-malloc
   "Create a 'C' level USB buffer of size SIZE.  Returns a pair (as a
@@ -30,14 +32,12 @@
 
 ;;read stockholm file creates a map where the key=name val=sequence
 (defn read-sto [f]
-  (reduce (fn [m x] 
-            (let [[name s] (str/split #"\s{2,}+" x)]
-              (if-not (nil? s)
-                (if (= name "#=GC SS_cons")
-                  (assoc m :cons (conj (get m :cons) s))
-                  (assoc m :seqs (conj (get m :seqs) s)))
-                m)))
-          {:seqs [] :cons []} (io/read-lines f)))
+  (let [[_ seq-lines cons-lines] (join-sto-fasta-lines f "")
+        [_ [_ cl]] (first cons-lines)
+        sl (reduce (fn [v [_ [_ sq]]]
+                  (conj v (.toUpperCase sq)))
+                [] seq-lines)]
+    (assoc {} :seqs sl :cons cl)))
 
 (defn write-svm [out-file m]
   (doseq [i m]
@@ -103,31 +103,26 @@
 (defn fraction-base-b [freq-map]
   (reduce (fn [m [k v]]
             ;;(prn k v (sum freq-map))
-            (assoc m k (/ v (sum freq-map))))
+            (if (contains? base k)
+              (assoc m k (/ v (sum freq-map)))
+              m))
           {} freq-map))
 
 ;;calculates the information for each base in a column and returns a
 ;;map where key=base value=information
 (defn information_i [p fract-map i]
   (reduce (fn [m [b q]]
-            (if-not (= b ".")
+            (if (contains? base b )
               (assoc m b (* 1 q (math/log2 (/ q (get p b 0.25)))))
               (assoc m b (* 1 q (math/log2 q)))))
           {} (second (nth fract-map i))))
 
-;;returns only the information in columns that are base paired
+;;returns only the information in column, i, that is base paired
 ;;according to the alignment
 (defn information_only_bp [info bp-loc]
-  (loop [y bp-loc
-         v []]
-    (if (seq y)
-      (recur (rest y)
-             (reduce (fn [v i] 
-                       (if (= (first i) (ffirst y))
-                         (conj v (second i))
-                         v))
-                     v info))
-      v)))
+  (map second (filter (fn [[i v]]
+                        (contains? (set (map first bp-loc)) i))
+                      info)))
 
 ;;calculates the information of all columns in an alignment of sequences
 (defn information [profile]
@@ -152,27 +147,46 @@
                         (count inseqs))))
             {}  bp-loc)))
 
+;;returns a vector of mutual information only at positions where there
+;;is base pairing provided by alignment. 
+(defn mutual_info_only_bp [info bp-loc]
+  (map second (filter (fn [[[i j] v]]
+                        (contains? (set bp-loc) [i j]))
+                      info)))
+
+;;calculates the mutual information between 2 positions i and j
 (defn mutual_info_ij [q fract-freqs i j]
   (let [qij (get q [i j])
         Eqij (apply + (expected_qij (second (nth fract-freqs i)) (second (nth fract-freqs j))))
         ]
-    (if (= qij 1)
-      (* -1 (math/log2 Eqij))
-      (+ (* qij (math/log2 (/ qij Eqij))) (* (- 1 qij) (math/log2 (/ (- 1 qij)(- 1 Eqij))))))))
+    ;;(prn "i=" i "j=" j "qij" qij "Eqij=" Eqij)
+    (cond
+     (= qij 1)
+     (* -1 (math/log2 Eqij))
+     (= qij 0)
+     (math/log2 (/ 1 (- 1 Eqij)))
+     (= Eqij 0)
+     0
+     :else
+     (+ (* qij (math/log2 (/ qij Eqij))) (* (- 1 qij) (math/log2 (/ (- 1 qij)(- 1 Eqij))))))))
 
+;;mutual information for all possible combinations of i and j columns
+;;in an alignment is calculated. A vector is returned consisting of
+;;[[i j] mutual information at ij]. This measures the log likelihood
+;;ratio of the observed base pairing occuring at random. higher = better
 (defn mutual_info [profile]
   (let [s (profile :seqs)
-        bp-loc (profile :pairs)
         len (count (first s))
         all-loc (for [i (range len)
-                      j (range len)]
+                      j (range (+ 4 i) len)]
                   [i j])
-        q (fract_comp_ij s bp-loc) ;;fraction of bp ij where
+        q (fract_comp_ij s all-loc) ;;fraction of bp ij where
         ;;there is complementarity
         fract-freqs (profile :fract)]
+    
     (map (fn [[i j]]
-           (mutual_info_ij q fract-freqs i j))
-         bp-loc)))
+           [[i j] (mutual_info_ij q fract-freqs i j)])
+         all-loc)))
 
 (defn pairwise_identity [inseqs]
   (stats/mean (for [i (range (count inseqs))
@@ -222,7 +236,7 @@
          (energy-of-seq profile) mu sdev)))
 
 (defn profile [m]
-  (let [struct (change-parens (first (m :cons)))
+  (let [struct (change-parens (m :cons))
         s (m :seqs)
         freqs (partition 2 (interleave (range (count (first s)))
                                        (map frequencies
@@ -243,7 +257,7 @@
     (prn "zscore" (stats/mean (zscore m)))
     (prn "sci" (sci (energy-of-aliseq m) (energy-of-seq m)))
     (prn "information" (stats/mean (information_only_bp (information m) (m :pairs))))
-    (prn "mutual info" (stats/mean (mutual_info m)))
+    (prn "mutual info" (stats/mean (mutual_info_only_bp (mutual_info m) (m :pairs))))
     (prn "pairwise identity" (pairwise_identity (m :seqs)))
     (prn "number of seqs" (count (m :seqs)))))
 
