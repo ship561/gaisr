@@ -20,6 +20,10 @@
 
 (def possible_pairs {"AU" 1 "UA" 1 "GC" 1 "CG" 1 "GU" 1 "UG" 1} )
 (def base #{"A" "C" "G" "U"} )
+(def all_pairs {"AA" 1 "AC" 1 "AG" 1 "AU" 1
+                "CA" 1 "CC" 1 "CG" 1 "CU" 1
+                "GA" 1 "GC" 1 "GG" 1 "GU" 1
+                "UA" 1 "UC" 1 "UG" 1 "UU" 1} )
 
 (defn jna-malloc
   "Create a 'C' level USB buffer of size SIZE.  Returns a pair (as a
@@ -80,14 +84,14 @@
                                (count inseqs) 
                                etr)]
     ;; (println "e =" e)
-    (println "e = " (+ (.getFloat etr 0) (.getFloat etr 4)) "=" (.getFloat etr 0) "+" (.getFloat etr 4))
+    ;;(println "e = " (+ (.getFloat etr 0) (.getFloat etr 4)) "=" (.getFloat etr 0) "+" (.getFloat etr 4))
     ;; (doseq [i inseqs] 
     ;;   (println i))
     ;; (println struct)
     (+ (.getFloat etr 0) (.getFloat etr 4))))
 
 (defn sci [Ealign Eavg]
-  (prn "Ea" Ealign "E" Eavg)
+  ;;(prn "Ea" Ealign "E" Eavg)
   (/ Ealign (stats/mean Eavg)))
 
 (defn sum [m]
@@ -107,6 +111,65 @@
               (assoc m k (/ v (sum freq-map)))
               m))
           {} freq-map))
+
+;;sum over all bases -p*log2(p) at position i
+(defn entropy_i [fract-map i]
+  (let [p-baseb (second (nth fract-map i))]
+    (math/sum
+     (map #(* -1 (* % (math/log2 %))) (vals p-baseb)))))
+  
+(defn entropy [profile]
+  (let [fract-map (profile :fract)
+        len (count (first (profile :seqs)))]
+    (for [i (range len)]
+      [i (entropy_i fract-map i)])
+    ))
+
+(defn joint_entropy_ij [profile]
+  (let [inseqs (profile :seqs)
+        len (count (first inseqs))
+        freqs (partition 2 (interleave (range (count (first inseqs)))
+                                       (apply map vector (map #(rest (str/split #"" %)) inseqs))))
+        all-loc (for [i (range len)
+                      j (range (+ 4 i) len)]
+                  [i j])
+        Pxy (reduce (fn [m [i j]]
+                      (let [fij (frequencies
+                                 (map (fn [b1 b2]
+                                        (str b1 b2)
+                                        ;;(when (contains? all_pairs
+                                        ;;(str b1 b2)) (str b1 b2))
+                                        )
+                                      (second (nth freqs i)) (second (nth freqs j))))]
+                        (assoc m [i j]
+                               (map #(/ (second %) (count inseqs)) fij))))
+                    {}  all-loc)]
+    (reduce (fn [m [[i j] p]]
+              (assoc m [i j] (math/sum
+                              (map #(* -1 % (math/log2 %)) p) )))
+            {} Pxy)))
+
+(defn gorodkin_mutual_info_ij [fract-map Hij i j]
+  (+ (entropy_i fract-map i) (entropy_i fract-map j) (* -1 (get Hij [i j]) ))
+  )
+
+(defn gorodkin_mutual_info [profile]
+  (let [len (count (first (profile :seqs)))
+        all-loc (for [i (range len)
+                      j (range (+ 4 i) len)]
+                  [i j])
+        fract-freqs (profile :fract)
+        Hij (joint_entropy_ij profile)]
+    (map (fn [[i j]]
+           [[i j] (gorodkin_mutual_info_ij fract-freqs Hij i j)])
+         all-loc)))
+
+(defn gorodkin_R [fract-map i j]
+  (let [Hi (entropy_i fract-map i)
+        Hj (entropy_i fract-map j)
+        Mij (min Hi Hj)]
+    [(if (zero? Hi) 0 (/ Mij Hi))
+     (if (zero? Hj) 0 (/ Mij Hj))]))
 
 ;;calculates the information for each base in a column and returns a
 ;;map where key=base value=information
@@ -252,7 +315,7 @@
    :background q
    :pairs pairs}))
 
-(defn main [f]
+(defn main-file [f]
   (let [m (profile (read-sto f))]
     (prn "zscore" (stats/mean (zscore m)))
     (prn "sci" (sci (energy-of-aliseq m) (energy-of-seq m)))
@@ -261,6 +324,29 @@
     (prn "pairwise identity" (pairwise_identity (m :seqs)))
     (prn "number of seqs" (count (m :seqs)))))
 
+(defn main-sto [sto class]
+  (let [m (profile sto)]
+    (println (stats/mean (zscore m)) ","
+             (sci (energy-of-aliseq m) (energy-of-seq m)) ","
+             (stats/mean (information_only_bp (information m) (m :pairs))) ","
+             (stats/mean (mutual_info_only_bp (mutual_info m) (m :pairs))) ","
+             (pairwise_identity (m :seqs)) ","
+             (count (m :seqs)) ","
+             class)))
+
+;; (let [negfiles (io/read-lines "/home/kitia/bin/gaisr/trainset/negtrainset.txt")
+;;       posfiles (io/read-lines "/home/kitia/bin/gaisr/trainset/postrainset.txt")
+;;       remove-empty (fn [files] 
+;;                      (remove (fn [x]
+;;                                (nil? (get x :cons)))
+;;                              (map #(read-sto (str "/home/kitia/bin/gaisr/trainset/" %)) files)))
+;;       negf (remove-empty negfiles)
+;;       posf (remove-empty posfiles)]
+;;   (io/with-out-writer "/home/kitia/bin/gaisr/trainset/trainfeatures.csv"
+;;     (doseq [i negf] 
+;;       (main-sto i -1))
+;;     (doseq [i posf]
+;;       (main-sto i 1))))
 
 ;; (let [s (find-gaps "GGUAUG.UAUUUC...AA..CCCCA..C..GAUA.AGCCCCGGAA..CU.UA...UU..........G..UGU......U....G.U........GAA.AUAG....AAC")
 ;;       [ptr buf] (jna-malloc (inc (count s)))]

@@ -35,7 +35,8 @@
    sequence data.  Originally this was all about working with (NCBI) Blast+,
    CMFINDER (and associated utils) and Infernal tools"
 
-  (:require [clojure.contrib.string :as str]
+  (:require clojure.string
+            [clojure.contrib.string :as str]
             [clojure.contrib.str-utils :as stru]
             [clojure.set :as set]
             [clojure.contrib.seq :as seq]
@@ -85,9 +86,13 @@
                          (vec
                           (reduce
                            (fn [m l]
-                             (let [[nm sq] (if (.startsWith l "#")
-                                             (str/split #"\s{2,}+" l)
-                                             (str/split #"\s+" l))
+                             (let [[nm sq] (cond
+                                            (.startsWith l "#=GC SS_cons")
+                                            [(str/join " " (butlast (str/split #"\s+" l))) (last (str/split #"\s+" l))] ;;splits the line apart and hopefully creates vector  ["#GC SS_cons" structure]
+                                            (.startsWith l "#")
+                                            (str/split #"\s{2,}+" l)
+                                            :else
+                                            (str/split #"\s+" l))
                                    prev (get m nm [(gen-uid) ""])]
                                (assoc m  nm [(first prev)
                                              (str (second prev) sq)])))
