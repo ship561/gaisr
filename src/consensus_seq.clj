@@ -4,7 +4,7 @@
             [incanter.stats :as stats]
             [incanter.core :as math]
             [clojure.set :as set]
-            [simplesvm :as ssvm]
+            ;[simplesvm :as ssvm]
             [clojure.java.shell :as shell])
   (:use [clojure.contrib.condition
          :only [raise handler-case *condition*
@@ -15,11 +15,11 @@
 
         net.n01se.clojure-jna
         refold
-        libsvm2weka
+        ;libsvm2weka
         edu.bc.bio.seq-utils))
 
 (def possible_pairs {"AU" 1 "UA" 1 "GC" 1 "CG" 1 "GU" 1 "UG" 1} )
-(def base #{"A" "C" "G" "U"} )
+(def base #{"A" "C" "G" "U" "."} )
 (def all_pairs {"AA" 1 "AC" 1 "AG" 1 "AU" 1
                 "CA" 1 "CC" 1 "CG" 1 "CU" 1
                 "GA" 1 "GC" 1 "GG" 1 "GU" 1
@@ -135,14 +135,15 @@
                   [i j])
         Pxy (reduce (fn [m [i j]]
                       (let [fij (frequencies
-                                 (map (fn [b1 b2]
+                                 (for [b1 (second (nth freqs i))
+                                       b2 (second (nth freqs j))]
                                         (str b1 b2)
                                         ;;(when (contains? all_pairs
                                         ;;(str b1 b2)) (str b1 b2))
                                         )
-                                      (second (nth freqs i)) (second (nth freqs j))))]
+                                       )]
                         (assoc m [i j]
-                               (map #(/ (second %) (count inseqs)) fij))))
+                               (map #(/ (second %) (math/sum (vals fij))) fij))))
                     {}  all-loc)]
     (reduce (fn [m [[i j] p]]
               (assoc m [i j] (math/sum
