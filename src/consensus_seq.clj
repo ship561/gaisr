@@ -4,7 +4,7 @@
             [incanter.stats :as stats]
             [incanter.core :as math]
             [clojure.set :as set]
-            ;[simplesvm :as ssvm]
+            [simplesvm :as ssvm]
             [clojure.java.shell :as shell])
   (:use [clojure.contrib.condition
          :only [raise handler-case *condition*
@@ -15,11 +15,11 @@
 
         net.n01se.clojure-jna
         refold
-        ;libsvm2weka
+        libsvm2weka
         edu.bc.bio.seq-utils))
 
 (def possible_pairs {"AU" 1 "UA" 1 "GC" 1 "CG" 1 "GU" 1 "UG" 1} )
-(def base #{"A" "C" "G" "U" "."} )
+(def base #{"A" "C" "G" "U" "." "-"} )
 (def all_pairs {"AA" 1 "AC" 1 "AG" 1 "AU" 1
                 "CA" 1 "CC" 1 "CG" 1 "CU" 1
                 "GA" 1 "GC" 1 "GG" 1 "GU" 1
@@ -111,66 +111,73 @@
               (assoc m k (/ v (sum freq-map)))
               m))
           {} freq-map))
-
-;;sum over all bases -p*log2(p) at position i
-(defn entropy_i [fract-map i]
-  (let [p-baseb (second (nth fract-map i))]
-    (math/sum
-     (map #(* -1 (* % (math/log2 %))) (vals p-baseb)))))
   
 (defn entropy [profile]
   (let [fract-map (profile :fract)
-        len (count (first (profile :seqs)))]
-    (for [i (range len)]
-      [i (entropy_i fract-map i)])
+        len (count (first (profile :seqs)))
+        ;;sum over all bases using -p*log2(p) at position i
+        entropy_i (fn [p-baseb i] 
+                    (math/sum
+                     (map #(* -1 % (math/log2 %)) (vals p-baseb))))]
+    (reduce (fn [m i]
+              (assoc m i (entropy_i (second (nth fract-map i)) i)))
+            {} (range len))
     ))
 
-(defn joint_entropy_ij [profile]
+(defn joint_entropy [profile]
   (let [inseqs (profile :seqs)
         len (count (first inseqs))
         freqs (partition 2 (interleave (range (count (first inseqs)))
                                        (apply map vector (map #(rest (str/split #"" %)) inseqs))))
         all-loc (for [i (range len)
                       j (range (+ 4 i) len)]
-                  [i j])
-        Pxy (reduce (fn [m [i j]]
-                      (let [fij (frequencies
-                                 (for [b1 (second (nth freqs i))
-                                       b2 (second (nth freqs j))]
-                                        (str b1 b2)
-                                        ;;(when (contains? all_pairs
-                                        ;;(str b1 b2)) (str b1 b2))
-                                        )
-                                       )]
-                        (assoc m [i j]
-                               (map #(/ (second %) (math/sum (vals fij))) fij))))
-                    {}  all-loc)]
-    (reduce (fn [m [[i j] p]]
-              (assoc m [i j] (math/sum
-                              (map #(* -1 % (math/log2 %)) p) )))
-            {} Pxy)))
+                  [i j])]
+    (reduce (fn [m [i j]]
+              (let [fij (frequencies
+                         (map (fn [b1 b2]
+                                (str b1 b2))
+                              (second (nth freqs i)) (second (nth freqs j))))
+                    fr (map #(/ (second %) (math/sum (vals fij))) fij)] ;;fr = percentages
+                (assoc m [i j]
+                       (math/sum
+                        (map #(* -1 % (math/log2 %)) fr))
+                       )))
+            {}  all-loc)
+    ))
 
-(defn gorodkin_mutual_info_ij [fract-map Hij i j]
-  (+ (entropy_i fract-map i) (entropy_i fract-map j) (* -1 (get Hij [i j]) ))
+(defn gutell_mutual_info_ij [Hi Hij i j]
+  (let [Hx (get Hi i)
+        Hy (get Hi j)
+        Hxy (get Hij [i j])]
+    (+ Hx Hy (* -1 Hxy) ))
   )
 
-(defn gorodkin_mutual_info [profile]
+(defn gutell_mutual_info [profile]
   (let [len (count (first (profile :seqs)))
         all-loc (for [i (range len)
                       j (range (+ 4 i) len)]
                   [i j])
         fract-freqs (profile :fract)
-        Hij (joint_entropy_ij profile)]
-    (map (fn [[i j]]
-           [[i j] (gorodkin_mutual_info_ij fract-freqs Hij i j)])
-         all-loc)))
+        Hx (entropy profile)
+        Hxy (joint_entropy profile)]
+    (reduce (fn [m [i j]]
+              (assoc m [i j] (gutell_mutual_info_ij Hx Hxy i j)))
+            {}  all-loc)))
 
-(defn gorodkin_R [fract-map i j]
-  (let [Hi (entropy_i fract-map i)
-        Hj (entropy_i fract-map j)
-        Mij (min Hi Hj)]
-    [(if (zero? Hi) 0 (/ Mij Hi))
-     (if (zero? Hj) 0 (/ Mij Hj))]))
+(defn gutell_R [profile]
+  (let [len (count (first (profile :seqs)))
+        fract-map (profile :fract)
+        Mxy (gutell_mutual_info profile)
+        H (entropy profile)]
+    (for [i (range len)
+          j (range (+ 4 i) len)]
+      (let [Hx (get H i)
+            Hy (get H j)
+            M (get Mxy [i j])]
+        [[i j] Hx Hy M
+         (if (zero? Hx) 0 (/ M Hx))
+         (if (zero? Hy) 0 (/ M Hy))]
+        ))))
 
 ;;calculates the information for each base in a column and returns a
 ;;map where key=base value=information
