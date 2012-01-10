@@ -112,72 +112,8 @@
               m))
           {} freq-map))
   
-(defn entropy [profile]
-  (let [fract-map (profile :fract)
-        len (count (first (profile :seqs)))
-        ;;sum over all bases using -p*log2(p) at position i
-        entropy_i (fn [p-baseb i] 
-                    (math/sum
-                     (map #(* -1 % (math/log2 %)) (vals p-baseb))))]
-    (reduce (fn [m i]
-              (assoc m i (entropy_i (second (nth fract-map i)) i)))
-            {} (range len))
-    ))
 
-(defn joint_entropy [profile]
-  (let [inseqs (profile :seqs)
-        len (count (first inseqs))
-        freqs (partition 2 (interleave (range (count (first inseqs)))
-                                       (apply map vector (map #(rest (str/split #"" %)) inseqs))))
-        all-loc (for [i (range len)
-                      j (range (+ 4 i) len)]
-                  [i j])]
-    (reduce (fn [m [i j]]
-              (let [fij (frequencies
-                         (map (fn [b1 b2]
-                                (str b1 b2))
-                              (second (nth freqs i)) (second (nth freqs j))))
-                    fr (map #(/ (second %) (math/sum (vals fij))) fij)] ;;fr = percentages
-                (assoc m [i j]
-                       (math/sum
-                        (map #(* -1 % (math/log2 %)) fr))
-                       )))
-            {}  all-loc)
-    ))
 
-(defn gutell_mutual_info_ij [Hi Hij i j]
-  (let [Hx (get Hi i)
-        Hy (get Hi j)
-        Hxy (get Hij [i j])]
-    (+ Hx Hy (* -1 Hxy) ))
-  )
-
-(defn gutell_mutual_info [profile]
-  (let [len (count (first (profile :seqs)))
-        all-loc (for [i (range len)
-                      j (range (+ 4 i) len)]
-                  [i j])
-        fract-freqs (profile :fract)
-        Hx (entropy profile)
-        Hxy (joint_entropy profile)]
-    (reduce (fn [m [i j]]
-              (assoc m [i j] (gutell_mutual_info_ij Hx Hxy i j)))
-            {}  all-loc)))
-
-(defn gutell_R [profile]
-  (let [len (count (first (profile :seqs)))
-        fract-map (profile :fract)
-        Mxy (gutell_mutual_info profile)
-        H (entropy profile)]
-    (for [i (range len)
-          j (range (+ 4 i) len)]
-      (let [Hx (get H i)
-            Hy (get H j)
-            M (get Mxy [i j])]
-        [[i j] Hx Hy M
-         (if (zero? Hx) 0 (/ M Hx))
-         (if (zero? Hy) 0 (/ M Hy))]
-        ))))
 
 ;;calculates the information for each base in a column and returns a
 ;;map where key=base value=information
@@ -217,6 +153,8 @@
                                       (second (nth freqs i)) (second (nth freqs j))))
                         (count inseqs))))
             {}  bp-loc)))
+
+
 
 ;;returns a vector of mutual information only at positions where there
 ;;is base pairing provided by alignment. 
@@ -328,6 +266,8 @@
     (prn "zscore" (stats/mean (zscore m)))
     (prn "sci" (sci (energy-of-aliseq m) (energy-of-seq m)))
     (prn "information" (stats/mean (information_only_bp (information m) (m :pairs))))
+    ;; (prn "entropy" (stats/mean (information_only_bp (entropy m) (m :pairs))))
+    ;; (prn "mutual info" (stats/mean (mutual_info_only_bp (gutell_mutual_info m) (m :pairs))))
     (prn "mutual info" (stats/mean (mutual_info_only_bp (mutual_info m) (m :pairs))))
     (prn "pairwise identity" (pairwise_identity (m :seqs)))
     (prn "number of seqs" (count (m :seqs)))))
@@ -337,24 +277,27 @@
     (println (stats/mean (zscore m)) ","
              (sci (energy-of-aliseq m) (energy-of-seq m)) ","
              (stats/mean (information_only_bp (information m) (m :pairs))) ","
+             ;; (stats/mean (information_only_bp (entropy m) (m :pairs))) ","
              (stats/mean (mutual_info_only_bp (mutual_info m) (m :pairs))) ","
+             ;; (stats/mean (mutual_info_only_bp (gutell_mutual_info m) (m :pairs))) ","
              (pairwise_identity (m :seqs)) ","
              (count (m :seqs)) ","
              class)))
 
-;; (let [negfiles (io/read-lines "/home/kitia/bin/gaisr/trainset/negtrainset.txt")
-;;       posfiles (io/read-lines "/home/kitia/bin/gaisr/trainset/postrainset.txt")
-;;       remove-empty (fn [files] 
-;;                      (remove (fn [x]
-;;                                (nil? (get x :cons)))
-;;                              (map #(read-sto (str "/home/kitia/bin/gaisr/trainset/" %)) files)))
-;;       negf (remove-empty negfiles)
-;;       posf (remove-empty posfiles)]
-;;   (io/with-out-writer "/home/kitia/bin/gaisr/trainset/trainfeatures.csv"
-;;     (doseq [i negf] 
-;;       (main-sto i -1))
-;;     (doseq [i posf]
-;;       (main-sto i 1))))
+(let [negfiles (io/read-lines "/home/kitia/bin/gaisr/trainset/negtrainset.txt")
+      posfiles (io/read-lines "/home/kitia/bin/gaisr/trainset/postrainset.txt")
+      remove-empty (fn [files] 
+                     (remove (fn [x]
+                               (nil? (get x :cons)))
+                             (map #(read-sto (str "/home/kitia/bin/gaisr/trainset/" %)) files)))
+      negf (remove-empty negfiles)
+      posf (remove-empty posfiles)]
+  (io/with-out-writer "/home/kitia/bin/gaisr/trainset/trainfeatures_gutell.csv"
+    (println "zscore, sci, information, entropy, mutual information, gutell mi, pairwise ident, number, class")
+    (doseq [i negf] 
+      (main-sto i -1))
+    (doseq [i posf]
+      (main-sto i 1))))
 
 ;; (let [s (find-gaps "GGUAUG.UAUUUC...AA..CCCCA..C..GAUA.AGCCCCGGAA..CU.UA...UU..........G..UGU......U....G.U........GAA.AUAG....AAC")
 ;;       [ptr buf] (jna-malloc (inc (count s)))]
