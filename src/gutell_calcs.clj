@@ -6,7 +6,11 @@
             [clojure.set :as set])
   (:use [consensus_seq :only [read-sto profile]]))
 
-(defn fractpairs_contain_nogaps [profile]
+(defn fractpairs_contain_nogaps
+  "Checks pairs of columns x and y to see how many contain gaps. returns the percent of gaps in
+   each pair of columns."
+  
+  [profile]
   (let [inseqs (profile :seqs)
         len (count (first inseqs))
         freqs (partition 2 (interleave (range (count (first inseqs)))
@@ -82,13 +86,13 @@
         Hx (entropy profile)
         Hxy (joint_entropy profile)]
     (reduce (fn [m [i j]]
-              (assoc m [i j] (gutell_mutual_info_ij Hx Hxy i j)))
+              (assoc m [i j] (mutual_info_ij Hx Hxy i j)))
             {}  all-loc)))
 
 (defn R [profile]
   (let [len (count (first (profile :seqs)))
         fract-map (profile :fract)
-        Mxy (gutell_mutual_info profile)
+        Mxy (mutual_info profile)
         H (entropy profile)]
     (reduce (fn [m [i j]]
               (let [Hx (get H i)

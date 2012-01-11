@@ -284,20 +284,20 @@
              (count (m :seqs)) ","
              class)))
 
-(let [negfiles (io/read-lines "/home/kitia/bin/gaisr/trainset/negtrainset.txt")
-      posfiles (io/read-lines "/home/kitia/bin/gaisr/trainset/postrainset.txt")
-      remove-empty (fn [files] 
-                     (remove (fn [x]
-                               (nil? (get x :cons)))
-                             (map #(read-sto (str "/home/kitia/bin/gaisr/trainset/" %)) files)))
-      negf (remove-empty negfiles)
-      posf (remove-empty posfiles)]
-  (io/with-out-writer "/home/kitia/bin/gaisr/trainset/trainfeatures_gutell.csv"
-    (println "zscore, sci, information, entropy, mutual information, gutell mi, pairwise ident, number, class")
-    (doseq [i negf] 
-      (main-sto i -1))
-    (doseq [i posf]
-      (main-sto i 1))))
+;; (let [negfiles (io/read-lines "/home/kitia/bin/gaisr/trainset/negtrainset.txt")
+;;       posfiles (io/read-lines "/home/kitia/bin/gaisr/trainset/postrainset.txt")
+;;       remove-empty (fn [files] 
+;;                      (remove (fn [x]
+;;                                (nil? (get x :cons)))
+;;                              (map #(read-sto (str "/home/kitia/bin/gaisr/trainset/" %)) files)))
+;;       negf (remove-empty negfiles)
+;;       posf (remove-empty posfiles)]
+;;   (io/with-out-writer "/home/kitia/bin/gaisr/trainset/trainfeatures_gutell.csv"
+;;     (println "zscore, sci, information, entropy, mutual information, gutell mi, pairwise ident, number, class")
+;;     (doseq [i negf] 
+;;       (main-sto i -1))
+;;     (doseq [i posf]
+;;       (main-sto i 1))))
 
 ;; (let [s (find-gaps "GGUAUG.UAUUUC...AA..CCCCA..C..GAUA.AGCCCCGGAA..CU.UA...UU..........G..UGU......U....G.U........GAA.AUAG....AAC")
 ;;       [ptr buf] (jna-malloc (inc (count s)))]

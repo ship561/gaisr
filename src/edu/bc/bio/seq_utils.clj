@@ -122,11 +122,44 @@
           (cl-format true "~A~40T~A~%" nm sq))))))
 
 
-;; (defn check-sto [sto]
-;;   (let [valid-symbols #{"A" "C" "G" "T" "U"
-;;                         "-" "." ":"
-;;                         "a" "b" "B"
-;;                         "(" ")" "<" ">"}
+(defn check-sto
+  "Checks a sto file to ensure that there are valid characters being used in the sequences
+   consensus structure line. Will print out errors in the sto file by sequence number.
+   Input requires a sto file"
+  
+  [sto]
+  (let [valid-symbols #{"A" "C" "G" "U"
+                        "-" "." ":"
+                        "a" "b" "B"
+                        "(" ")" "<" ">"}
+        [_ seq-lines cons-lines] (join-sto-fasta-lines sto "")
+        [_ [_ cl]] (first cons-lines)
+        ;;adds numbers to the sequences so that they
+        ;;can be identified
+        sl (partition 2 
+                      (interleave (iterate inc 1)
+                                  (reduce (fn [v [_ [_ sq]]]
+                                            (conj v (.toUpperCase sq)))
+                                          [] seq-lines)))
+        ;;checks for valid symbols
+        check-char (fn [[n s]] 
+                     [n (every? #(contains? valid-symbols %) (rest (str/split #"" s)))])
+        ;;checks to see if sequences have same
+        ;;length as consensus structure
+        check-len (fn [[n s]] 
+                    [n (= (count s) (count cl))])]
+    (cond
+     (some #(false? (second %)) (map #(check-char %) sl))
+     (prn "sequence contains invalid character in: " (remove #(second %) (map #(check-char %) sl)))
+     
+     (some #(false? (second %)) (map #(check-len %) sl))
+     (prn "sequence contains invalid length compared to cons-line in: " (remove #(second %) (map #(check-len %) sl)))
+     
+     (false? (second (check-char [1 cl])))
+     (prn "consensus structure contains invalid character")
+     
+     :else
+     (prn "sto is good"))))
         
 
 ;;; ----------------------------------------------------------------------
