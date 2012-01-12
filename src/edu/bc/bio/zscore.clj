@@ -4,7 +4,7 @@
 	    [edu.bc.fs :as fs]
             [clojure.contrib.string :as str]))
 
-(def fdir "/home/peis/bin/zscore2/")
+(def fdir "/home/peis/bin/zscore3/")
 
 (defmacro <=_< [a b c]
   `(let [a# ~a
@@ -44,7 +44,7 @@
           at (range 0.25 0.76 0.05)
           gc (range 0.25 0.76 0.05)]
     (doseq [x (take nseq (generate-seqs len gcat at gc))]
-      (println ">" [len gcat at gc])
+      (println ">" len "," gcat "," at "," gc)
       (println x))))
 
 ;; (defn generate-set-files [dir]
