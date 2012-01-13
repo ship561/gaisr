@@ -1,8 +1,18 @@
-(ns zscore
-  (:use edu.bc.utils)
+(ns edu.bc.bio.zscore
+  (:use edu.bc.utils
+        net.n01se.clojure-jna)
   (:require [clojure.contrib.io :as io]
 	    [edu.bc.fs :as fs]
             [clojure.contrib.string :as str]))
+
+(defn jna-malloc
+  "Create a 'C' level USB buffer of size SIZE.  Returns a pair (as a
+   vector): [ptr-to-the-buffer the-buffer] Where ptr-to-the-buffer is
+   a JNA/C ptr object and the-buffer is a java.nio.DirectByteBuffer
+   object." [size]
+  (let [buf (make-cbuf size)
+        ptr (pointer buf)]
+    [ptr buf]))
 
 (def fdir "/home/peis/bin/zscore3/")
 
@@ -44,7 +54,7 @@
           at (range 0.25 0.76 0.05)
           gc (range 0.25 0.76 0.05)]
     (doseq [x (take nseq (generate-seqs len gcat at gc))]
-      (println ">" len "," gcat "," at "," gc)
+      (println ">" (str len "," gcat "," at "," gc))
       (println x))))
 
 ;; (defn generate-set-files [dir]
@@ -62,18 +72,32 @@
 (defn read-file2 [file]
   (doseq [[p s] (partition 2 (io/read-lines file))]
     (let [[l gcat at gc] (map #(Double/parseDouble %) (str/split #"," (subs p 2)))
-          seq (drop 1 (str/split #"" s))
           freq (frequencies seq)
-          gcat-per (double (/ (+ (get freq "g" 0) (get freq "c" 0)) l))
-          at-per (double (/ (get freq "a" 0) (+ (get freq "a" 0) (get freq "u" 0))))
-          gc-per (double (/ (get freq "g" 0) (+ (get freq "g" 0) (get freq "c" 0))))]
+          gcat-per (double (/ (+ (get freq \g 0) (get freq \c 0)) l))
+          at-per (double (/ (get freq \a 0) (+ (get freq \a 0) (get freq \u 0))))
+          gc-per (double (/ (get freq \g 0) (+ (get freq \g 0) (get freq \c 0))))]
       (when-not (and (between? at at-per) (between? gc gc-per)
 		     (between? gcat gcat-per) (= l (count s)))
         (prn [p [l (count s)] [at at-per] [gc gc-per] [gcat gcat-per]])))))
 
+(defn energy-of-seq [s]
+  (jna-invoke Void RNA/read_parameter_file "/home/kitia/Desktop/ViennaRNA-2.0.0/rna_andronescu2007.par")
+  (jna-invoke Integer RNA/set_ribo_switch 1)
+  (jna-invoke Void RNA/update_fold_params)
+  (let [[ptr buf] (jna-malloc (inc (count s)))
+        e (jna-invoke Float RNA/fold s ptr)
+        ]
+    e
+    ;;(println "E =" e)
+    ;; (println "sequence  =" i)
+    ;;(println "Structure =" (.getString ptr 0 false))
+    ))
 
-
-
+(defn calc-energy-file [file]
+  (reduce (fn [m [p s]]
+            (assoc m p (conj (get m p []) (energy-of-seq s))))
+          {} (partition 2 (io/read-lines file))))
+  
 ;; (do-text-file ["/home/peis/bin/overnight-set.txt"]
 ;;    :x)
 
