@@ -55,7 +55,7 @@
   (pmap (fn [length]
           (let [out-file (str fdir "set-" length ".txt")]
             (fs/mkdirs (fs/dirname out-file))
-            (io/with-out-writer out-file (generate-set-file length 1000))))
+            (io/with-out-writer out-file (generate-set length 1000))))
         (range 50 401 50)))
 
 
@@ -120,5 +120,4 @@
 ;;           (doseq [i (stat)] (doseq [j i] (prn j))))))
 
 ;; (def runovernight2
-;;  (future (io/with-out-writer "/home/peis/bin/overnight-set.txt"
-;;            (print-set (generate-set)))))
+;;  (future (generate-set-file)))
