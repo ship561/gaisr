@@ -1,6 +1,8 @@
 (defproject mlab "1.0.0-SNAPSHOT"
   :description "meyer lab server - will be GAISR"
 
+  :jvm-opts ["-Xmx10240m"]
+  
   :dependencies [[org.clojure/clojure "1.2.1"]
                  [org.clojure/clojure-contrib "1.2.0"]
                  [clojure-csv "1.3.0"]
