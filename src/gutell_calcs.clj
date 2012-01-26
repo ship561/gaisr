@@ -3,12 +3,14 @@
             [clojure.contrib.io :as io]
             [incanter.stats :as stats]
             [incanter.core :as math]
-            [clojure.set :as set])
+            [clojure.set :as set]
+            [clojure-csv.core :as csv])
   (:use [consensus_seq :only [read-sto profile]]))
 
 (defn fractpairs_contain_nogaps
-  "Checks pairs of columns x and y to see how many contain gaps. returns the percent of gaps in
-   each pair of columns."
+  "Checks pairs of columns x and y to see how many contain
+   gaps. returns a map of the percent of gaps in each pair of
+   columns."
   
   [profile]
   (let [inseqs (profile :seqs)
@@ -30,8 +32,9 @@
     ))
 
 (defn remove_gap_col
-  "removes the columns from a caculation where there are greater than 'per' gaps.
-   m = map, gap_col = column gap percents, per = threshold below which columns are removed"
+  "removes the columns from a caculation where there are greater than
+   'per' gaps. m = map, gap_col = column gap percents, per = threshold
+   below which columns are removed.  Returns a map"
 
   [m gap_col per]
   (select-keys m (keys (remove #(< (val %) per) gap_col)))
@@ -89,7 +92,28 @@
               (assoc m [i j] (mutual_info_ij Hx Hxy i j)))
             {}  all-loc)))
 
-(defn R [profile]
+(defn mutual_info_only_bp
+  "returns a vector of mutual information only at positions where
+   there is base pairing provided by alignment."
+  
+  [info bp-loc]
+  (filter (fn [[[i j] v]]
+            (contains? (set bp-loc) [i j]))
+          info))
+
+(defn mutual_info_not_bp
+  "returns a vector of mutual information only at positions where
+   there is base pairing provided by alignment."
+  
+  [info bp-loc]
+  (remove (fn [[[i j] v]]
+            (contains? (set bp-loc) [i j]))
+          info))
+
+(defn R
+  "Function returns a map where k=[i j] and v=[Hx Hy M R1 R2]"
+  
+  [profile]
   (let [len (count (first (profile :seqs)))
         fract-map (profile :fract)
         Mxy (mutual_info profile)
@@ -105,3 +129,41 @@
             {} (for [i (range len)
                      j (range (+ 4 i) len)]
                  [i j]))))
+
+(defn print_out
+  "prints out the information, mutual information, R, outputs in a csv
+   type format. if no out file is provided, then it prints to the
+   repl, otherwise, it will print to specified file"
+  
+  ([info]
+  (doseq [[[i j] x] info]
+    (print (csv/write-csv (vector (map str (conj (apply list x) j i)))))
+      ))
+
+  ([info outfile]
+     (io/with-out-writer outfile (print_out info))))
+
+(defn main
+  "launches the default way to calcuate Hx Hy M R1 R2. It will print
+  out a default file at the current time."
+  
+  [f]
+  (let [p (profile (read-sto f))
+        mi (R p)
+        loc (p :pairs)
+        mi (remove_gap_col mi (fractpairs_contain_nogaps p) 0.5) ;;remove gapped columns
+        x (map #(mutual_info_only_bp mi %) loc) ;;intersection between
+        ;;mi and loc
+        y (map #(mutual_info_not_bp mi %) loc)] ;;difference between
+    ;;mi and loc
+    (print_out (apply set/union (map set x)) (str (subs f 0 (- (count f) 3)) "onlybp.csv"))
+    (print_out (apply set/intersection (map set y)) (str (subs f 0 (- (count f) 3)) "notbp.csv"))))
+
+(let [p (profile (read-sto "/home/kitia/Downloads/S15_101711UBedit.sto"))
+                   mi (R p)
+                   loc (p :pairs)
+                   mi (remove_gap_col mi (fractpairs_contain_nogaps p) 0.5) ;;removed gapped columns
+                   x (map #(mutual_info_only_bp mi %) loc)]
+                   (for [i x]
+                        (let [mis (map (fn [[_ [_ _ a _]]] a) i)]
+                             [(stats/mean mis) (stats/sd mis) (apply min mis) (apply max mis) (count mis)])))

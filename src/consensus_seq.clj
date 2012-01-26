@@ -37,7 +37,9 @@
 ;;read stockholm file creates a map where the key=name val=sequence
 (defn read-sto [f]
   (let [[_ seq-lines cons-lines] (join-sto-fasta-lines f "")
-        [_ [_ cl]] (first cons-lines)
+        cl (map #(last (second %))
+                (filter #(.startsWith (first %) "#=GC SS_cons")
+                        cons-lines))
         sl (reduce (fn [v [_ [_ sq]]]
                   (conj v (.toUpperCase sq)))
                 [] seq-lines)]
@@ -57,7 +59,7 @@
   (jna-invoke Integer RNA/set_ribo_switch 1)
   (jna-invoke Void RNA/update_fold_params)
    (map (fn [inseq]
-          (let [struct (profile :structure)
+          (let [struct (first (profile :structure))
                 [i st] (remove-gaps inseq struct)
                 [ptr buf] (jna-malloc (inc (count i)))
                 e (jna-invoke Float RNA/energy_of_structure i st)
@@ -75,7 +77,7 @@
   (jna-invoke Void RNA/read_parameter_file "/home/kitia/Desktop/ViennaRNA-2.0.0/rna_andronescu2007.par")
   (jna-invoke Integer RNA/set_ribo_switch 1)
   (jna-invoke Void RNA/update_alifold_params)
-  (let [struct (profile :structure)
+  (let [struct (first (profile :structure))
         inseqs (profile :seqs)
         [btr bbuf] (jna-malloc (count (first inseqs)))
         [etr ebuf] (jna-malloc (* 4 2))
@@ -245,7 +247,7 @@
          (energy-of-seq profile) mu sdev)))
 
 (defn profile [m]
-  (let [struct (change-parens (m :cons))
+  (let [struct (map #(change-parens %) (m :cons))
         s (m :seqs)
         freqs (partition 2 (interleave (range (count (first s)))
                                        (map frequencies
@@ -254,7 +256,7 @@
                                            (assoc l n (fraction-base-b freq-map)))
                                          {} freqs))
         q (fraction-base-b (frequencies (flatten (map #(rest (str/split #"" %)) s))))
-        pairs (refold/make_pair_table struct)]
+        pairs (map #(refold/make_pair_table %) struct)]
   {:seqs s
    :structure struct
    :fract fract-freqs
