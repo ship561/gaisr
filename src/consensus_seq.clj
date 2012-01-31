@@ -62,7 +62,8 @@
           (let [struct (first (profile :structure))
                 [i st] (remove-gaps inseq struct)
                 [ptr buf] (jna-malloc (inc (count i)))
-                e (jna-invoke Float RNA/energy_of_structure i st)
+                e (jna-invoke Float RNA/fold i st)
+                ;;e (jna-invoke Float RNA/energy_of_structure i st)
                 ]
             ;;(prn "i =" i)
             ;;(prn "st=" st)
@@ -73,6 +74,18 @@
             ))
         (profile :seqs)))
 
+(defn energy-of-seq2 [profile]
+  (map (fn [inseq]
+         (let [struct (first (profile :structure))
+               [i st] (remove-gaps inseq struct)
+               foldout (-> (str i "\n" (str/replace-re #"\(|\)" "|" st))
+                           ((fn [x] (shell/sh "echo" x)))
+                           ((fn [x] (shell/sh "RNAfold" "-C" "--noPS" "-P" "/usr/local/ViennaRNA-2.0.0/rna_andronescu2007.par" :in (get x :out))))
+                           ((fn [x] (get x :out))))]
+           (Double/parseDouble
+                 (re-find #"\-*\d*.\d+" foldout))))
+       (profile :seqs)))
+
 (defn energy-of-aliseq [profile]
   (jna-invoke Void RNA/read_parameter_file "/home/kitia/Desktop/ViennaRNA-2.0.0/rna_andronescu2007.par")
   (jna-invoke Integer RNA/set_ribo_switch 1)
@@ -81,16 +94,28 @@
         inseqs (profile :seqs)
         [btr bbuf] (jna-malloc (count (first inseqs)))
         [etr ebuf] (jna-malloc (* 4 2))
+        ali (jna-invoke Float RNA/alifold (into-array inseqs) btr)
         e (jna-invoke Float RNA/energy_of_alistruct (into-array inseqs) 
-                               struct 
+                               btr ;(.getString btr 0 false) ;struct 
                                (count inseqs) 
                                etr)]
-    ;; (println "e =" e)
+    (println "e =" e ali)
     ;;(println "e = " (+ (.getFloat etr 0) (.getFloat etr 4)) "=" (.getFloat etr 0) "+" (.getFloat etr 4))
     ;; (doseq [i inseqs] 
     ;;   (println i))
-    ;; (println struct)
-    (+ (.getFloat etr 0) (.getFloat etr 4))))
+    (println struct)
+    (println (.getString btr 0 false))
+    (prn (.getFloat etr 0) (.getFloat etr 4))))
+
+(defn energy-of-aliseq2 [profile f]
+  (let [st (first (profile :structure))
+        foldout (-> st
+                    ((fn [x] (shell/sh "echo" x)))
+                    ((fn [x] (shell/sh "RNAalifold"  "-P" "/home/kitia/Desktop/ViennaRNA-2.0.0/rna_andronescu2007.par" "-r" "--noPS" "-C" f :in (get x :out))))
+                    ((fn [x] (get x :out))))]
+    (Double/parseDouble
+     (re-find #"\-*\d*.\d+" foldout))
+    ))
 
 (defn sci [Ealign Eavg]
   ;;(prn "Ea" Ealign "E" Eavg)
@@ -99,9 +124,12 @@
 (defn sum [m]
   (apply + (vals m)))
 
-;;expected number of base pairs given frequencies of a base a position
-;;i and j
-(defn expected_qij [prob1 prob2]
+
+(defn expected_qij
+  "expected number of base pairs given frequencies of a base a
+  position i and j"
+
+  [prob1 prob2]
   (for [k1 (keys prob1)
         k2 (keys prob2)]
     (* (get possible_pairs (str k1 k2) 0) (get prob1 k1) (get prob2 k2))))
@@ -126,15 +154,23 @@
               (assoc m b (* 1 q (math/log2 q)))))
           {} (second (nth fract-map i))))
 
-;;returns only the information in column, i, that is base paired
-;;according to the alignment
-(defn information_only_bp [info bp-loc]
-  (map second (filter (fn [[i v]]
-                        (contains? (set (map first bp-loc)) i))
-                      info)))
 
-;;calculates the information of all columns in an alignment of sequences
-(defn information [profile]
+(defn information_only_bp
+  "returns only the information in column, i, that is base paired
+   according to the alignment"
+  
+  [info bp-loc]
+  (let [bp-loc (if (seq? bp-loc) (first bp-loc) bp-loc)]
+    (map second (filter (fn [[i v]]
+                          (contains? (set (map first bp-loc)) i))
+                        info))))
+
+
+(defn information
+  "calculates the information in each column in an alignment of
+   sequences"
+  
+  [profile]
   (let [fract-map (profile :fract)
         p (profile :background)
         len (count (first (profile :seqs)))]
@@ -158,12 +194,15 @@
 
 
 
-;;returns a vector of mutual information only at positions where there
-;;is base pairing provided by alignment. 
+ 
 (defn mutual_info_only_bp [info bp-loc]
-  (map second (filter (fn [[[i j] v]]
-                        (contains? (set bp-loc) [i j]))
-                      info)))
+  "returns a vector of mutual information only at positions where
+   there is base pairing provided by alignment."
+
+  (let [bp-loc (if (seq? bp-loc) (first bp-loc) bp-loc)]
+    (map second (filter (fn [[[i j] v]]
+                          (contains? (set bp-loc) [i j]))
+                        info))))
 
 ;;calculates the mutual information between 2 positions i and j
 (defn mutual_info_ij [q fract-freqs i j]
@@ -235,16 +274,16 @@
          (iterate inc 1) s base-comp)))
 
 (defn zscore [profile]
-  (io/with-out-writer "/home/kitia/bin/libsvm-3.1/zscore-out1.txt"
-    (doseq [i (base_comp_features profile)]
-      (println i)))
-  (libsvm2weka/txt2csv "/home/kitia/bin/libsvm-3.1/zscore-out1.txt" "/home/kitia/bin/libsvm-3.1/zscore-out1.csv")
-  (let [mu (getpredicted (libsvm2weka/wekaNN "/home/kitia/mean1.csv" "/home/kitia/bin/libsvm-3.1/zscore-out1.csv"))
-        sdev (getpredicted (libsvm2weka/wekaNN "/home/kitia/sd1.csv" "/home/kitia/bin/libsvm-3.1/zscore-out1.csv"))]
+  ;; (io/with-out-writer "/home/kitia/bin/gaisr/testset.csv"
+  ;;   (doseq [i (base_comp_features profile)]
+  ;;     (println i)))
+  (txt2csv (base_comp_features profile) "/home/kitia/bin/gaisr/testset.csv")
+  (let [mu (getpredicted (wekalibsvm "/home/kitia/bin/gaisr/mean.csv" "/home/kitia/bin/gaisr/testset.csv"))
+        sdev (getpredicted (wekalibsvm "/home/kitia/bin/gaisr/sd.csv" "/home/kitia/bin/gaisr/testset.csv"))]
     (map (fn [x mean sdev]
            ;;(prn "x" x "mean" mean "sigma" sdev)
            (/ (- x mean) sdev))
-         (energy-of-seq profile) mu sdev)))
+         (energy-of-seq2 profile) mu sdev)))
 
 (defn profile [m]
   (let [struct (map #(change-parens %) (m :cons))
@@ -277,7 +316,7 @@
 (defn main-sto [sto class]
   (let [m (profile sto)]
     (println (stats/mean (zscore m)) ","
-             (sci (energy-of-aliseq m) (energy-of-seq m)) ","
+             (sci (energy-of-aliseq2 m sto) (energy-of-seq2 m)) ","
              (stats/mean (information_only_bp (information m) (m :pairs))) ","
              ;; (stats/mean (information_only_bp (entropy m) (m :pairs))) ","
              (stats/mean (mutual_info_only_bp (mutual_info m) (m :pairs))) ","
@@ -290,12 +329,12 @@
 ;;       posfiles (io/read-lines "/home/kitia/bin/gaisr/trainset/postrainset.txt")
 ;;       remove-empty (fn [files] 
 ;;                      (remove (fn [x]
-;;                                (nil? (get x :cons)))
+;;                                (empty? (get x :cons)))
 ;;                              (map #(read-sto (str "/home/kitia/bin/gaisr/trainset/" %)) files)))
 ;;       negf (remove-empty negfiles)
 ;;       posf (remove-empty posfiles)]
-;;   (io/with-out-writer "/home/kitia/bin/gaisr/trainset/trainfeatures_gutell.csv"
-;;     (println "zscore, sci, information, entropy, mutual information, gutell mi, pairwise ident, number, class")
+;;   (io/with-out-writer "/home/kitia/bin/gaisr/trainset/trainfeatures2.csv"
+;;     (println "zscore, sci, information, mutual information, pairwise ident, number, class")
 ;;     (doseq [i negf] 
 ;;       (main-sto i -1))
 ;;     (doseq [i posf]
