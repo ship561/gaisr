@@ -133,6 +133,14 @@
             (assoc m name [(stats/mean es) (stats/sd es) es])))
           {} (group-by first (partition 3 (io/read-lines file)))))
 
+;; (io/with-out-writer (str fdir "sd.csv")
+;;   (doseq [x (pmap (fn [in-file]
+;;                     (map-energy in-file))
+;;                   (for [i (range 50 401 50)]
+;;                     (str fdir "calc-set-" i ".txt")))
+;;           [att [_ sd _]] x]
+;;     (println (subs att 2) "," sd)))
+
 ;; (do-text-file ["/home/peis/bin/overnight-set.txt"]
 ;;    :x)
 
