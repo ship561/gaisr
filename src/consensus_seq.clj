@@ -43,7 +43,7 @@
         sl (reduce (fn [v [_ [_ sq]]]
                   (conj v (.toUpperCase sq)))
                 [] seq-lines)]
-    (assoc {} :seqs sl :cons cl)))
+    (assoc {} :seqs sl :cons cl :file f)))
 
 (defn write-svm [out-file m]
   (doseq [i m]
@@ -107,8 +107,9 @@
     (println (.getString btr 0 false))
     (prn (.getFloat etr 0) (.getFloat etr 4))))
 
-(defn energy-of-aliseq2 [profile f]
+(defn energy-of-aliseq2 [profile]
   (let [st (first (profile :structure))
+        f (profile :filename)
         foldout (-> st
                     ((fn [x] (shell/sh "echo" x)))
                     ((fn [x] (shell/sh "RNAalifold"  "-P" "/home/kitia/Desktop/ViennaRNA-2.0.0/rna_andronescu2007.par" "-r" "--noPS" "-C" f :in (get x :out))))
@@ -239,22 +240,31 @@
          all-loc)))
 
 (defn pairwise_identity [inseqs]
-  (stats/mean (for [i (range (count inseqs))
-                    j (range (inc i) (count inseqs))]
-                (let [s1 (nth inseqs i)
-                      s2 (nth inseqs j)
-                      c (loop [k 0
-                               c 0]
-                          (if (< k (count s1))
-                            (if (and (not= (.substring s1 k (inc k)) ".")
-                                     (not= (.substring s2 k (inc k)) ".")
-                                     (= (.substring s1 k (inc k)) (.substring s2 k (inc k))))
-                              (recur (inc k)
-                                     (inc c))
-                              (recur (inc k)
-                                     c))
-                            c))]
-                  (/ c (max (count (str/replace-re #"\." "" s1)) (count (str/replace-re #"\." "" s2))))))))
+  (if (= 1 (count inseqs)) [[0 1]]
+      (for [i (range (count inseqs))
+            j (range (inc i) (count inseqs))]
+        (let [s1 (nth inseqs i)
+              s2 (nth inseqs j)
+              c (loop [k 0
+                       match 0
+                       pairs 0]
+                  (if (< k (count s1))
+                    (if (or (and (not= (.substring s1 k (inc k)) "-")
+                                 (not= (.substring s1 k (inc k)) "."))
+                            (and (not= (.substring s2 k (inc k)) "-")
+                                 (not= (.substring s2 k (inc k)) ".")))
+                      (if (= (.substring s1 k (inc k)) (.substring s2 k (inc k)))
+                        (recur (inc k)
+                               (inc match)
+                               (inc pairs))
+                        (recur (inc k)
+                               match
+                               (inc pairs)))
+                      (recur (inc k)
+                             match
+                             pairs))
+                    [match pairs]))]
+         c))))
 
 (defn ratio [b1 b2]
   (let [sum (+ b1 b2)]
@@ -278,8 +288,8 @@
   ;;   (doseq [i (base_comp_features profile)]
   ;;     (println i)))
   (txt2csv (base_comp_features profile) "/home/kitia/bin/gaisr/testset.csv")
-  (let [mu (getpredicted (wekalibsvm "/home/kitia/bin/gaisr/mean.csv" "/home/kitia/bin/gaisr/testset.csv"))
-        sdev (getpredicted (wekalibsvm "/home/kitia/bin/gaisr/sd.csv" "/home/kitia/bin/gaisr/testset.csv"))]
+  (let [mu (getpredicted (wekalibsvm "/home/kitia/bin/gaisr/mean.csv" "/home/kitia/bin/gaisr/testset.csv" "mean"))
+        sdev (getpredicted (wekalibsvm "/home/kitia/bin/gaisr/sd.csv" "/home/kitia/bin/gaisr/testset.csv" "sd"))]
     (map (fn [x mean sdev]
            ;;(prn "x" x "mean" mean "sigma" sdev)
            (/ (- x mean) sdev))
@@ -300,28 +310,33 @@
    :structure struct
    :fract fract-freqs
    :background q
-   :pairs pairs}))
+   :pairs pairs
+   :filename (m :file)}))
 
 (defn main-file [f]
   (let [m (profile (read-sto f))]
     (prn "zscore" (stats/mean (zscore m)))
-    (prn "sci" (sci (energy-of-aliseq m) (energy-of-seq m)))
+    (prn "sci" (sci (energy-of-aliseq2 m) (energy-of-seq2 m)))
     (prn "information" (stats/mean (information_only_bp (information m) (m :pairs))))
     ;; (prn "entropy" (stats/mean (information_only_bp (entropy m) (m :pairs))))
     ;; (prn "mutual info" (stats/mean (mutual_info_only_bp (gutell_mutual_info m) (m :pairs))))
     (prn "mutual info" (stats/mean (mutual_info_only_bp (mutual_info m) (m :pairs))))
-    (prn "pairwise identity" (pairwise_identity (m :seqs)))
+    (prn "pairwise identity" (let [id (pairwise_identity (m :seqs))]
+                               (double (/ (apply + (map first id))
+                                          (apply + (map second id))))))
     (prn "number of seqs" (count (m :seqs)))))
 
 (defn main-sto [sto class]
   (let [m (profile sto)]
     (println (stats/mean (zscore m)) ","
-             (sci (energy-of-aliseq2 m sto) (energy-of-seq2 m)) ","
+             (sci (energy-of-aliseq2 m) (energy-of-seq2 m)) ","
              (stats/mean (information_only_bp (information m) (m :pairs))) ","
              ;; (stats/mean (information_only_bp (entropy m) (m :pairs))) ","
              (stats/mean (mutual_info_only_bp (mutual_info m) (m :pairs))) ","
              ;; (stats/mean (mutual_info_only_bp (gutell_mutual_info m) (m :pairs))) ","
-             (pairwise_identity (m :seqs)) ","
+             (let [id (pairwise_identity (m :seqs))]
+               (double (/ (apply + (map first id))
+                          (apply + (map second id))))) ","
              (count (m :seqs)) ","
              class)))
 

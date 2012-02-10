@@ -128,32 +128,13 @@
       (doseq [cl cons-lines]
         (let [[nm [_ sq]] cl]
           (cl-format true "~A~40T~A~%" nm sq))))))
->>>>>>> upstream/master
 
 
-(defn join-sto-fasta-file
-  "Block/join unblocked sequence lines in a sto or fasta file.  For
-   sto files ORIGIN is a #=GF line indicating tool origin of file.
-   For example, '#=GF AU Infernal 1.0.2'.  Defaults to nothing."
-
-  [in-filespec out-filespec
-   & {origin :origin :or {origin ""}}]
-  (let [[gc-lines seq-lines cons-lines] (join-sto-fasta-lines in-filespec origin)]
-    (io/with-out-writer (fs/fullpath out-filespec)
-      (doseq [gcl gc-lines] (println gcl))
-      (doseq [sl seq-lines]
-        (let [[nm [id sq]] sl]
-          (cl-format true "~A~40T~A~%" nm sq)))
-      (doseq [cl cons-lines]
-        (let [[nm [id sq]] cl]
-          (cl-format true "~A~40T~A~%" nm sq))))))
-
-
-<<<<<<< HEAD
 (defn check-sto
-  "Checks a sto file to ensure that there are valid characters being used in the sequences
-   consensus structure line. Will print out errors in the sto file by sequence number.
-   Input requires a sto file"
+  "Checks a sto file to ensure that there are valid characters being
+   used in the sequences consensus structure line. Will print out
+   errors in the sto file by sequence number.  Input requires a sto
+   file"
   
   [sto]
   (let [valid-symbols #{"A" "C" "G" "U"
@@ -189,7 +170,6 @@
      :else
      (prn "sto is good"))))
         
-=======
 ;;; Convert STO format to ALN format (ClustalW format).  This is
 ;;; needed by some processors which cannot take a Stockholm alignment
 ;;; format but need an "equivalent" in ClustalW ALigNment format.
@@ -201,18 +181,36 @@
    conversion (it is overwritten if it already exists!)"
 
   [stoin alnout]
-  (let [seq-lines (filter #(not (or (= "//" %) (re-find #"^#" %)))
-                          (first (sto-GC-and-seq-lines stoin)))
-        seq-lines (map #(str/replace-re #"\." "-" %) seq-lines)]
-    (io/with-out-writer (fs/fullpath alnout)
+  (let [seq-lines (second (join-sto-fasta-lines stoin ""))
+        seq-lines (map (fn [[nm [uid sl]]]
+                         [nm [uid (map #(str/join "" %) (partition-all 60 (str/replace-re #"\." "-" sl)))]])
+                       seq-lines)]
+    (io/with-out-writer alnout
       (println "CLUSTAL W (1.83) multiple sequence alignment\n")
-      (doseq [sl seq-lines]
-        (println sl)))
-    alnout))
+      (loop [x seq-lines]
+        (let [[nm [uid sl]] (first x)]
+          (when (not-empty sl)
+            (do 
+              (doseq [[nm [uid sl]] x]
+                (cl-format true "~A~40T~A~%" nm (first sl)))
+              (println "")
+              (recur (map (fn [[nm [uid sl]]]
+                            [nm [uid (rest sl)]])
+                          x)))))))
+    alnout)
+
+  ;; (let [seq-lines (filter #(not (or (= "//" %) (re-find #"^#" %)))
+  ;;                         (first (sto-GC-and-seq-lines stoin)))
+  ;;       seq-lines (map #(str/replace-re #"\." "-" %) seq-lines)]
+  ;;   (io/with-out-writer (fs/fullpath alnout)
+  ;;     (println "CLUSTAL W (1.83) multiple sequence alignment\n")
+  ;;     (doseq [sl seq-lines]
+  ;;       (println sl)))
+  ;;   alnout)
+  )
 
 
 
->>>>>>> upstream/master
 
 ;;; ----------------------------------------------------------------------
 ;;; BLAST functions.  These are currently based on NCBI BLAST+ (which
