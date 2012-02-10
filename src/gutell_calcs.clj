@@ -59,8 +59,8 @@
 (defn joint_entropy [profile]
   (let [inseqs (profile :seqs)
         len (count (first inseqs))
-        freqs (partition 2 (interleave (range (count (first inseqs)))
-                                       (apply map vector (map #(rest (str/split #"" %)) inseqs))))
+        freqs (vec (partition 2 (interleave (range (count (first inseqs)))
+                                       (apply map vector (map #(rest (str/split #"" %)) inseqs)))))
         all-loc (for [i (range len)
                       j (range (+ 4 i) len)]
                   [i j])]
@@ -69,11 +69,11 @@
                          (map (fn [b1 b2]
                                 (str b1 b2))
                               (second (nth freqs i)) (second (nth freqs j))))
-                    fr (map #(/ (second %) (math/sum (vals fij))) fij)] ;;fr = percentages
+                    tot (math/sum (vals fij))
+                    fr (map #(/ (second %) tot ) fij)] ;;fr = percentages
                 (assoc m [i j]
                        (math/sum
-                        (map #(* -1 % (math/log %)) fr))
-                       )))
+                        (map #(* -1 % (math/log %)) fr)))))
             {}  all-loc)
     ))
 
@@ -217,9 +217,32 @@
         mi (mutual_info p)
         rand_mi (map #(mutual_info (profile %)) (rand_aln aln n))]
     (for [k (keys mi)]
-      [k (/ (math/sum (map (fn [x]
-                          (let [sample-mi (get x k)]
-                            (if (> sample-mi (get mi k)) 1 0)))
-                        rand_mi))
-         n)])))
+      [k (double (/ (count
+                     (filter (fn [x]
+                               (let [sample-mi (get x k)]
+                                 (> sample-mi (get mi k))))
+                             rand_mi))
+                    n))])))
 
+(defn pval2
+  "Reads in a sto file and n = an integer. The sto file is used to
+   generate a Clustal W type file with the same file name with an .aln
+   extension instead of .sto.  Produces .aln and generates n random
+   shuffled alignments and then calcuates p value by taking the
+   fraction sampled alignment MI > true MI. returns a position-pair
+   and the pvalue"
+
+  [stoin n]
+  (let [aln (sto->aln stoin (str (subs stoin 0 (- (count stoin) 3)) "aln"))
+        p (profile (read-sto stoin))
+        mi (mutual_info p)
+        rand_mi (apply concat (pmap (fn [randa]
+                                      (map #(mutual_info (profile %)) randa))
+                                    (partition-all (/ n 4) (rand_aln aln n))))]
+    (for [k (keys mi)]
+      [k (double (/ (count
+                     (filter (fn [x]
+                               (let [sample-mi (get x k)]
+                                 (> sample-mi (get mi k))))
+                             rand_mi))
+                    n))])))
