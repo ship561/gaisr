@@ -75,57 +75,66 @@
                  (.startsWith % "#=GC RF"))))
    (io/read-lines (fs/fullpath stofilespec))))
 
+
 (defn join-sto-fasta-lines [infilespec origin]
-  (let [[seq-lines gc-lines] (sto-GC-and-seq-lines infilespec)
-        
+  (let [[seqcons-lines gc-lines] (sto-GC-and-seq-lines infilespec)
         gc-lines (if (not= origin "")
                    (concat (take 1 gc-lines) [origin] (drop 1 gc-lines))
                    gc-lines)
-        recombined-seqs (sort-by
-                         #(-> % second first)
-                         (vec
-                          (reduce
-                           (fn [m l]
-                             (let [[nm sq] (cond
-                                            (.startsWith l "#=GC SS_cons")
-                                            [(str/join " " (butlast (str/split #"\s+" l))) (last (str/split #"\s+" l))] ;;splits the line apart and hopefully creates vector  ["#GC SS_cons" structure]
-                                            (.startsWith l "#")
-                                            (str/split #"\s{2,}+" l)
-                                            :else
-                                            (str/split #"\s+" l))
-                                   prev (get m nm [(gen-uid) ""])]
-                               (assoc m  nm [(first prev)
-                                             (str (second prev) sq)])))
-                           {} seq-lines)))
+        recombined-lines (sort-by
+                          #(-> % second first)
+                          (vec (reduce
+                                (fn [m l]
+                                  (let [[nm sq]
+                                        (cond
+                                         ;;splits the line apart and
+                                         ;;hopefully creates vector
+                                         ;;["#GC SS_cons" structure]
+                                         (.startsWith l "#=GC SS_cons")
+                                         [(str/join " " (butlast (str/split #"\s+" l)))
+                                          (last (str/split #"\s+" l))]
+
+                                         (.startsWith l "#")
+                                         (str/split #"\s{2,}+" l)
+
+                                         :else
+                                         (str/split #"\s+" l))
+
+                                        prev (get m nm [(gen-uid) ""])]
+                                    (assoc m  nm [(first prev)
+                                                  (str (second prev) sq)])))
+                                {} seqcons-lines)))
         {seq-lines false cons-lines true} (group-by
                                            #(or (.startsWith (first %) "//")
                                                 (.startsWith (first %) "#"))
-                                           recombined-seqs)]
+                                           recombined-lines)]
     [gc-lines seq-lines cons-lines]))
 
 
 (defn join-sto-fasta-file
-  "Block/join unblocked sequence lines in a sto or fasta file.  For
-   sto files ORIGIN is a #=GF line indicating tool origin of file.
-   For example, '#=GF AU Infernal 1.0.2'.  Defaults to nothing."
+  "Block/join unblocked sequence lines in a sto or fasta file. For sto
+   files ORIGIN is a #=GF line indicating tool origin of file.  For
+   example, '#=GF AU Infernal 1.0.2'. Defaults to nothing."
 
   [in-filespec out-filespec
    & {origin :origin :or {origin ""}}]
-  (let [[gc-lines seq-lines cons-lines] (join-sto-fasta-lines in-filespec origin)]
+  (let [[gc-lines seq-lines cons-lines]
+        (join-sto-fasta-lines in-filespec origin)]
     (io/with-out-writer (fs/fullpath out-filespec)
       (doseq [gcl gc-lines] (println gcl))
       (doseq [sl seq-lines]
-        (let [[nm [id sq]] sl]
+        (let [[nm [_ sq]] sl]
           (cl-format true "~A~40T~A~%" nm sq)))
       (doseq [cl cons-lines]
-        (let [[nm [id sq]] cl]
+        (let [[nm [_ sq]] cl]
           (cl-format true "~A~40T~A~%" nm sq))))))
 
 
 (defn check-sto
-  "Checks a sto file to ensure that there are valid characters being used in the sequences
-   consensus structure line. Will print out errors in the sto file by sequence number.
-   Input requires a sto file"
+  "Checks a sto file to ensure that there are valid characters being
+   used in the sequences consensus structure line. Will print out
+   errors in the sto file by sequence number.  Input requires a sto
+   file"
   
   [sto]
   (let [valid-symbols #{"A" "C" "G" "U"
@@ -161,6 +170,47 @@
      :else
      (prn "sto is good"))))
         
+;;; Convert STO format to ALN format (ClustalW format).  This is
+;;; needed by some processors which cannot take a Stockholm alignment
+;;; format but need an "equivalent" in ClustalW ALigNment format.
+;;;
+(defn sto->aln
+  "Convert a stockhom format alignment file into its ClustalW
+   equivalent ALN format.  STOIN is the filespec for the stockholm
+   format file and ALNOUT is the filespec for the resulting
+   conversion (it is overwritten if it already exists!)"
+
+  [stoin alnout]
+  (let [seq-lines (second (join-sto-fasta-lines stoin ""))
+        seq-lines (map (fn [[nm [uid sl]]]
+                         [nm [uid (map #(str/join "" %) (partition-all 60 (str/replace-re #"\." "-" sl)))]])
+                       seq-lines)]
+    (io/with-out-writer alnout
+      (println "CLUSTAL W (1.83) multiple sequence alignment\n")
+      (loop [x seq-lines]
+        (let [[nm [uid sl]] (first x)]
+          (when (not-empty sl)
+            (do 
+              (doseq [[nm [uid sl]] x]
+                (cl-format true "~A~40T~A~%" nm (first sl)))
+              (println "")
+              (recur (map (fn [[nm [uid sl]]]
+                            [nm [uid (rest sl)]])
+                          x)))))))
+    alnout)
+
+  ;; (let [seq-lines (filter #(not (or (= "//" %) (re-find #"^#" %)))
+  ;;                         (first (sto-GC-and-seq-lines stoin)))
+  ;;       seq-lines (map #(str/replace-re #"\." "-" %) seq-lines)]
+  ;;   (io/with-out-writer (fs/fullpath alnout)
+  ;;     (println "CLUSTAL W (1.83) multiple sequence alignment\n")
+  ;;     (doseq [sl seq-lines]
+  ;;       (println sl)))
+  ;;   alnout)
+  )
+
+
+
 
 ;;; ----------------------------------------------------------------------
 ;;; BLAST functions.  These are currently based on NCBI BLAST+ (which

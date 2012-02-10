@@ -1,5 +1,5 @@
-(defproject mlab "1.0.0-SNAPSHOT"
-  :description "meyer lab server - will be GAISR"
+(defproject gaisr "1.0.0-SNAPSHOT"
+  :description "GAISR - Genomic Analysis Illuminating Structured RNA"
 
   :jvm-opts ["-Xmx20g"]
   

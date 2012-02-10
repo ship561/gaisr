@@ -4,8 +4,12 @@
             [incanter.stats :as stats]
             [incanter.core :as math]
             [clojure.set :as set]
-            [clojure-csv.core :as csv])
-  (:use [consensus_seq :only [read-sto profile]]))
+            [clojure-csv.core :as csv]
+            [clojure.java.shell :as shell]
+            [clojure.contrib.seq :as seq])
+  (:use [consensus_seq :only [read-sto profile]]
+        [edu.bc.utils]
+        [edu.bc.bio.seq-utils]))
 
 (defn fractpairs_contain_nogaps
   "Checks pairs of columns x and y to see how many contain
@@ -159,11 +163,63 @@
     (print_out (apply set/union (map set x)) (str (subs f 0 (- (count f) 3)) "onlybp.csv"))
     (print_out (apply set/intersection (map set y)) (str (subs f 0 (- (count f) 3)) "notbp.csv"))))
 
-(let [p (profile (read-sto "/home/kitia/Downloads/S15_101711UBedit.sto"))
-                   mi (R p)
-                   loc (p :pairs)
-                   mi (remove_gap_col mi (fractpairs_contain_nogaps p) 0.5) ;;removed gapped columns
-                   x (map #(mutual_info_only_bp mi %) loc)]
-                   (for [i x]
-                        (let [mis (map (fn [[_ [_ _ a _]]] a) i)]
-                             [(stats/mean mis) (stats/sd mis) (apply min mis) (apply max mis) (count mis)])))
+;; (let [p (profile (read-sto "/home/kitia/Downloads/S15_101711UBedit.sto"))
+;;                    mi (R p)
+;;                    loc (p :pairs)
+;;                    mi (remove_gap_col mi (fractpairs_contain_nogaps p) 0.5) ;;removed gapped columns
+;;                    x (map #(mutual_info_only_bp mi %) loc)]
+;;                    (for [i x]
+;;                         (let [mis (map (fn [[_ [_ _ a _]]] a) i)]
+;;                              [(stats/mean mis) (stats/sd mis) (apply min mis) (apply max mis) (count mis)])))
+
+(defn rand_aln
+  "Generates n random alignments based on the input alignment, f, in Clustal format.
+   This function produces a map similar to the read-sto function. The
+   map contains {:seqs :cons :file}"
+  
+  [f n]
+  (let [s (second
+           (seq/separate (fn [x] (= x '("CLUSTAL W (SISSIz 0.1 simulation)"))) 
+                         (partition-by #(= % "CLUSTAL W (SISSIz 0.1 simulation)")
+                                       (str/split-lines
+                                        ((shell/sh "SISSIz" "--rna" "-s" "-n" (str n) f) :out)))))
+        recombine-lines (fn [x]
+                          (reduce (fn [m l]
+                                    (let [[nm sq]
+                                          (str/split #"\s+" l)
+                                          prev (get m nm [(gen-uid) ""])]
+                                      (if-not (empty? nm)
+                                        (assoc m  nm [(first prev)
+                                                      (str (second prev) sq)])
+                                        m)))
+                                  {} x)) ]
+    (map (fn [x]
+           (let [m (recombine-lines x)]
+             (assoc {} :seqs (map (fn [[n [uid sq]]]
+                                    sq)
+                                  m)
+                    :cons (list (apply str
+                                 (repeat (count (second (second (first m)))) ".")))
+                    :file "")))
+         s)))
+
+(defn pval
+  "Reads in a sto file and n = an integer. The sto file is used to
+   generate a Clustal W type file with the same file name with an .aln
+   extension instead of .sto.  Produces .aln and generates n random
+   shuffled alignments and then calcuates p value by taking the
+   fraction sampled alignment MI > true MI. returns a position-pair
+   and the pvalue"
+
+  [stoin n]
+  (let [aln (sto->aln stoin (str (subs stoin 0 (- (count stoin) 3)) "aln"))
+        p (profile (read-sto stoin))
+        mi (mutual_info p)
+        rand_mi (map #(mutual_info (profile %)) (rand_aln aln n))]
+    (for [k (keys mi)]
+      [k (/ (math/sum (map (fn [x]
+                          (let [sample-mi (get x k)]
+                            (if (> sample-mi (get mi k)) 1 0)))
+                        rand_mi))
+         n)])))
+
