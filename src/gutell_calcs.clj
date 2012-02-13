@@ -236,10 +236,10 @@
   (let [aln (sto->aln stoin (str (subs stoin 0 (- (count stoin) 3)) "aln"))
         p (profile (read-sto stoin))
         mi (mutual_info p)
-        rand_mi (apply concat (pmap (fn [randa]
-                                      (doall (for [i randa]
-                                               (mutual_info (profile i)))))
-                                    (partition-all (/ n 4) (doall (rand_aln aln n)))))]
+        rand_mi (apply concat (doall
+                               (pmap (fn [randa]
+                                       (doall (pmap #(mutual_info (profile %)) randa)))
+                                     (partition-all (/ n 10) (rand_aln aln n)))))]
     (for [k (keys mi)]
       [k (double (/ (count
                      (filter (fn [x]
