@@ -237,8 +237,9 @@
         p (profile (read-sto stoin))
         mi (mutual_info p)
         rand_mi (apply concat (pmap (fn [randa]
-                                      (map #(mutual_info (profile %)) randa))
-                                    (partition-all (/ n 4) (rand_aln aln n))))]
+                                      (doall (for [i randa]
+                                               (mutual_info (profile i)))))
+                                    (partition-all (/ n 4) (doall (rand_aln aln n)))))]
     (for [k (keys mi)]
       [k (double (/ (count
                      (filter (fn [x]
