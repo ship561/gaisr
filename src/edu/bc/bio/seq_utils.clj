@@ -138,7 +138,7 @@
   
   [sto]
   (let [valid-symbols #{"A" "C" "G" "U"
-                        "-" "." ":"
+                        "-" "." ":" "_"
                         "a" "b" "B"
                         "(" ")" "<" ">"}
         [_ seq-lines cons-lines] (join-sto-fasta-lines sto "")

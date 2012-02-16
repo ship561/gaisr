@@ -49,8 +49,8 @@
         len (count (first (profile :seqs)))
         ;;sum over all bases using -p*log2(p) at position i
         entropy_i (fn [p-baseb i] 
-                    (math/sum
-                     (map #(* -1 % (math/log %)) (vals p-baseb))))]
+                    (sum
+                     (map #(* -1 % (Math/log %)) (vals p-baseb))))]
     (reduce (fn [m i]
               (assoc m i (entropy_i (second (nth fract-map i)) i)))
             {} (range len))
@@ -69,11 +69,11 @@
                          (map (fn [b1 b2]
                                 (str b1 b2))
                               (second (nth freqs i)) (second (nth freqs j))))
-                    tot (math/sum (vals fij))
+                    tot (sum (vals fij))
                     fr (map #(/ (second %) tot ) fij)] ;;fr = percentages
                 (assoc m [i j]
-                       (math/sum
-                        (map #(* -1 % (math/log %)) fr)))))
+                       (sum
+                        (map #(* -1 % (Math/log %)) fr)))))
             {}  all-loc)
     ))
 
@@ -102,7 +102,9 @@
   
   [info bp-loc]
   (filter (fn [[[i j] v]]
-            (contains? (set bp-loc) [i j]))
+            (contains? (set
+                        (apply concat (map #(vec %) bp-loc)))
+                       [i j]))
           info))
 
 (defn mutual_info_not_bp
@@ -111,7 +113,9 @@
   
   [info bp-loc]
   (remove (fn [[[i j] v]]
-            (contains? (set bp-loc) [i j]))
+            (contains? (set
+                        (apply concat (map #(vec %) bp-loc)))
+                       [i j]))
           info))
 
 (defn R
@@ -238,7 +242,7 @@
         mi (mutual_info p)
         rand_mi (apply concat (doall
                                (pmap (fn [randa]
-                                       (doall (pmap #(mutual_info (profile %)) randa)))
+                                       (doall (map #(mutual_info (profile %)) randa)))
                                      (partition-all (/ n 10) (rand_aln aln n)))))]
     (for [k (keys mi)]
       [k (double (/ (count
