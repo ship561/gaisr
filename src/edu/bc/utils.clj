@@ -4,6 +4,7 @@
    fairly general and intended to be usable on most any project"
 
   (:require [clojure.contrib.math :as math]
+            [clojure.contrib.combinatorics :as comb]
             [clojure.contrib.string :as str]
             [clojure.contrib.str-utils :as stru]
             [clojure.set :as set]
@@ -17,7 +18,7 @@
   (:use [clojure.contrib.condition
          :only [raise handler-case *condition*
                 print-stack-trace stack-trace-info]]
-        [clojure.java.shell
+        [clj-shell.shell
          :only (sh)]
         [clojure.contrib.pprint
          :only (cl-format compile-format)])
@@ -52,6 +53,11 @@
   [x]
   (Math/log x))
 
+(defn ln
+  "Return the natural log of x"
+  [x]
+  (Math/log x))
+
 (def
  ^{:doc
    "Named version of (logb 2).  Important enough to have a named top
@@ -71,26 +77,25 @@
   "For positive integer N, compute N factorial."
   [n]
   {:pre [(integer? n) (> n -1)]}
-  (if (= n 0)
+  (if (or (= n 0) (= n 1))
     1
-    (reduce #(* %1 %2) (range 1 (inc n)))))
+    (reduce * (range 2 (inc n)))))
 
 (defn n-k!
   "For positive integers N and K, compute (n-k)!"
   [n k]
-  {:pre [(integer? n) (integer? k) (> n -1) (<= k n)]}
-  (cond
-   (= n k) 1
-   (= k 1) (n! n)
-   :else
-   (reduce #(* %1 %2) (range n k -1))))
-
+  {:pre [(integer? n) (integer? k) (> n -1) (<= 0 k n)]}
+  (if (= n k)
+    1
+    (n! (- n k))))
 
 (defn nCk
   "For positive integers N and K, compute N choose K (binomial
-   coefficient)"
+   coefficient): n!/((n-k)!k!)"
   [n k]
-  (/ (n-k! n k) (n! k)))
+  {:pre [(integer? n) (integer? k) (> n -1) (<= 0 k n)]}
+  (/ (reduce * (range n (- n k) -1))
+     (n! k)))
 
 
 (defn shannon-entropy
@@ -106,6 +111,8 @@
                (float (+ H (float (* p (float (log2 p))))))))
            (float 0.0) fs)]
     (float (- H))))
+
+
 
 
 (defn sum
@@ -168,6 +175,10 @@
 ;;; _will_ be in future (at which point these can be retired...)
 
 
+(defn drop-until [pred coll] (drop-while (complement pred) coll))
+(defn take-until [pred coll] (take-while (complement pred) coll))
+
+
 (defn merge-with*
   "Merge-with needs to call user supplied F with the KEY as well!!!
   Returns a map that consists of the rest of the maps conj-ed onto the
@@ -213,7 +224,7 @@
 
 
 (defn random-subset [s cnt]
-  (let [s (seq (set s))]
+  (let [s (vec (set s))]
     (cond
      (<= cnt 0) #{}
      (<= (count s) cnt) (set s)
@@ -223,9 +234,12 @@
          ss
          (recur (conj ss (rand-nth s))))))))
 
+(defn combins [k coll]
+  (lazy-seq (map vec (comb/combinations coll k))))
 
-(defn drop-until [pred coll] (drop-while (complement pred) coll))
-(defn take-until [pred coll] (take-while (complement pred) coll))
+(defn choose-k [k coll]
+  (combins k coll))
+
 
 
 
@@ -336,18 +350,175 @@
           s))))
 
 
-;;; Simple ngram comparison.  Metric is
-(defn letter-pairs [s n]
+
+
+;;; Various frequency counts, probabilities, similarity coefficients,
+;;; corresponding difference fns and ngram operations
+
+(defn letter-pairs [n s]
   (set (map #(apply str %) (partition n 1 s))))
 
-(defn word-letter-pairs [s n]
-  (reduce (fn[m s] (set/union m (letter-pairs s n))) #{} (str/split #" " s)))
+(defn word-letter-pairs [n s]
+  (reduce (fn[m s] (set/union m (letter-pairs n s))) #{} (str/split #" " s)))
 
-(defn ngram-compare [s1 s2 & {uc? :uc? n :n :or {n 2 uc? true}}]
-  (let [wlp1 (word-letter-pairs (if uc? (str/upper-case s1) s1) n)
-        wlp2 (word-letter-pairs (if uc? (str/upper-case s2) s2) n)]
-    (/ (* 2 (count (set/intersection wlp1 wlp2)))
-       (+ (count wlp1) (count wlp2)))))
+(defn freqn
+  "Frequencies of n-grams in collection COLL treated as a sequence
+   Ex: (freqn 2 \"acagtcaacctggagcctggt\")
+   =>
+   {\"aa\" 1, \"cc\" 2, \"gg\" 2, \"ac\" 2, \"ag\" 2, \"gt\" 2,
+   \"tc\" 1, \"ct\" 2, \"tg\" 2, \"ga\" 1, \"gc\" 1, \"ca\" 2}
+  "
+  [n coll]
+  (if (= 1 n)
+    (frequencies (seq coll))
+    (loop [s (seq coll)
+           res (transient {})]
+      (let [k (str/join "" (take n s))]
+        (if (>= (count s) n)
+          (recur (drop 1 s)
+                 (assoc! res k (inc (get res k 0))))
+          (persistent! res))))))
+
+(defn freqs-probs [n coll]
+  (let [freqs (freqn n coll)
+        sz (sum (vals freqs))
+        probs (reduce (fn[m [k v]]
+                        (assoc m k (float (/ v sz))))
+                      {} freqs)]
+    [freqs probs sz]))
+
+
+(defn cc-freqn [n colls]
+  (reduce
+   (fn[m coll]
+     (merge-with #(+ %1 %2) m (freqn n coll)))
+   {} colls))
+
+(defn cc-freqs-probs [n colls]
+  (let [freqs (cc-freqn n colls)
+        sz (sum (vals freqs))
+        probs (reduce (fn[m [k v]]
+                        (assoc m k (float (/ v sz))))
+                      {} freqs)]
+    [freqs probs sz]))
+
+
+(defn alphabet [coll & {n :n :or {n 1}}]
+  (cond
+   (map? coll) (keys coll)
+   (set? coll) coll
+   :else
+   (keys (freqn n coll))))
+
+(defn combins-freqn [n coll]
+  (reduce (fn[m x] (assoc m x (inc (get m x 0))))
+          {} (combins n coll)))
+
+(defn choose-k-freqn [n coll] )
+
+
+
+
+(defn probs [n coll]
+  (second (freqs-probs n coll)))
+
+
+(defn log-odds [frq1 frq2]
+  (ln (/ frq1 frq2)))
+
+(defn lod-score [qij pi pj]
+  (ln (/ qij (* pi pj))))
+
+(defn raw-lod-score [qij pi pj & {scaling :scaling :or {scaling 1.0}}]
+  (if (= scaling 1.0)
+    (lod-score qij pi pj)
+    (int (/ (lod-score qij pi pj) scaling))))
+
+(defn bg-freq [n seqs] )
+
+(defn bg-freqs-probs [] )
+
+
+
+
+
+
+
+
+(defn diff-fn
+  "Return the function that is 1 - F applied to its args: (1 - (apply f args)).
+
+   Ex: (let [dice-diff (diff-fn dice-coeff)
+             ...]
+         (dice-diff some-set1 some-set2))"
+  [f] (fn [& args] (- 1 (apply f args))))
+
+
+(defn dice-coeff [s1 s2]
+  (/ (* 2 (count (set/intersection s1 s2)))
+     (+ (count s1) (count s2))))
+
+(defn jaccard-index [s1 s2]
+  (/ (count (set/intersection s1 s2))
+     (count (set/union s1 s2))))
+
+(defn tversky-index
+  "Tversky index of two sets S1 and S2.  A generalized NON metric
+   similarity 'measure'.  Generalization is through the ALPHA and BETA
+   coefficients:
+
+   TI(S1,S2) = (/ |S1^S2| (+ |S1^S2| (* ALPHA |S1-S2|) (* BETA |S2-S1|)))
+
+   For example, with alpha=beta=1,  TI is jaccard-index
+                with alpha=beta=1/2 TI is dice-coeff
+   "
+  [s1 s2 alpha beta]
+  (let [s1&s2 (count (set/intersection s1 s2))
+        s1-s2 (count (set/difference s1 s2))
+        s2-s1 (count (set/difference s2 s1))]
+    (/ s1&s2
+       (+ s1&s2 (* alpha s1-s2) (* beta s2-s1)))))
+
+
+(def
+ ^{:doc
+   "Named version of (diff-fn jaccard-index s1 s2).  This difference
+    function is a similarity that is a proper _distance_ metric (hence
+    usable in metric trees like bk-trees)."
+   :arglists '([s1 s2])}
+ jaccard-dist
+ (diff-fn jaccard-index))
+
+
+(defn freq-jaccard-index
+  ""
+  [s1 s2]
+  (let [freq-s1 (set s1)
+        freq-s2 (set s2)
+        c1 (freq-sum (set/intersection freq-s1 freq-s2))
+        c2 (freq-sum (set/union freq-s1 freq-s2))]
+    (/ c1 c2)))
+
+
+(defn bi-tri-grams [s]
+  (let [bi-grams (set (keys (freqn 2 s)))
+        tri-grams (set (keys (freqn 3 s)))]
+    [(set/union bi-grams tri-grams)
+     [bi-grams tri-grams]]))
+
+(defn all-grams [s]
+  (let [all-gram-sets
+        (for [n (range 1 (count s))]
+          (-> (freqn n s) keys set))]
+    [(apply set/union all-gram-sets) all-gram-sets]))
+
+(defn ngram-compare
+  ""
+  [s1 s2 & {uc? :uc? n :n sfn :sfn ngfn :ngfn
+            :or {n 2 uc? false sfn dice-coeff ngfn word-letter-pairs}}]
+  (let [s1 (ngfn n (if uc? (str/upper-case s1) s1))
+        s2 (ngfn n (if uc? (str/upper-case s2) s2))]
+    (sfn s1 s2)))
 
 ;;;(float (ngram-compare "FRANCE" "french"))
 ;;;(float (ngram-compare "FRANCE" "REPUBLIC OF FRANCE"))
@@ -622,30 +793,43 @@
                         args))
 
         i (first (seq/positions  #(= :> %1) the-args))
-        [the-args stdout] (if (not i)
-                            [the-args nil]
-                            [(vec (concat (take i the-args)
-                                          (subvec the-args (+ 2 i))))
-                             (the-args (+ 1 i))])
+
+        [the-args stdout-file] (if (not i)
+                                 [the-args nil]
+                                 [(vec (concat (take i the-args)
+                                               (subvec the-args (+ 2 i))))
+                                  (the-args (+ 1 i))])
 
         i (first (seq/positions #(= :?> %1) the-args))
-        [the-args errout] (if (not i)
-                            [the-args nil]
-                            [(concat (take i the-args)
-                                     (subvec the-args (+ 2 i)))
-                             (the-args (+ 1 i))])
+        [the-args stderr-file] (if (not i)
+                                 [the-args nil]
+                                 [(concat (take i the-args)
+                                          (subvec the-args (+ 2 i)))
+                                  (the-args (+ 1 i))])
 
-        result (apply sh program the-args)]
+        write-out (fn[stdout]
+                    (let [rdr (io/reader stdout)]
+                      (io/with-out-writer (fs/fullpath stdout-file)
+                        (doseq [l (line-seq rdr)] (println l)))))
+        write-err (fn[stderr]
+                    (let [rdr (io/reader stderr)]
+                      (io/with-out-writer (fs/fullpath stderr-file)
+                        (doseq [l (line-seq rdr)] (println l)))))
+
+        the-args (if stdout-file (concat the-args [:out-fn write-out]) the-args)
+        the-args (if stderr-file (concat the-args [:err-fn write-err]) the-args)
+
+        result (apply sh program the-args)
+        result (if stderr-file (assoc result :err stderr-file) result)
+        result (if stdout-file (assoc result :out stdout-file) result)]
 
     (when (not= 0 (result :exit))
-      (if errout
-        (with-open [out (io/writer (io/file-str errout))]
-          (binding [*out* out] (print (result :err))))
+      (if stderr-file
+        :err-in-result
         (raise :type :program-failed
                :exit (result :exit)
                :pgm program :err (result :err)
                :args the-args)))
-    (if stdout
-      (with-open [out (io/writer (io/file-str stdout))]
-        (binding [*out* out] (print (result :out))))
+    (if stdout-file
+      result
       (result :out))))
