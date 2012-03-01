@@ -51,6 +51,7 @@
          :only (raise handler-case *condition* print-stack-trace)]
         [clojure.contrib.pprint
          :only (cl-format compile-format)]
+        [incanter.stats :only (hamming-distance)]
         ))
 
 
@@ -129,6 +130,63 @@
         (let [[nm [_ sq]] cl]
           (cl-format true "~A~40T~A~%" nm sq))))))
 
+(defn nsubseq-sto-file
+  "Reduces the number of sequences in an unblocked sto file. Takes in
+   a sto file and outputs a new sto file with nseq number of
+   lines. The function currently uses hamming distance to determine
+   the difference between any 2 sequnces in the alignment. After the
+   pairwise hamming distances are determined, the alignment is then
+   re-ordered according to these hamming distance vectors. These
+   vectors should allow similar sequences to be grouped together. Once
+   grouped together, the function goes through and eliminates a
+   sequence when comparing seq i and i+1. i+1 is removed if the two
+   sequences are less different than a set threshold, thr=0.5
+   initially. The loop compares i and i+1 then i+2 vs i+3 and so
+   forth. The threshold will increase by 0.01 each loop so that the
+   final list of sequences will be nseq long."
+
+  [infile outfile nseq]
+  (let [[gc-lines seq-lines cons-lines] (join-sto-fasta-lines infile "")
+        ;;create a map where k=name v=[hamming distance vector seq]
+        calc-diff (fn [inseqs] (reduce (fn [m [n [_ s1]]]
+                                   (assoc m n
+                                          [(vec (for [[_ [_ s2]] inseqs]
+                                                  (hamming-distance s1 s2)))
+                                           s1]))
+                                 {} inseqs))
+        ;;returns a map k=name v=seq. removes the hamming distance
+        ;;from the vector
+        remove-diff (fn [x] (into {} (map (fn [[nm [_ sq]]]
+                                           [nm sq])
+                                         x)))
+        ;;output of new sto file to outfile
+        print-sto (fn [x]
+                    (io/with-out-writer outfile
+                      (doseq [gc gc-lines] (println gc))
+                      (doseq [sl x]
+                        (let [[nm [_ sq]] sl]
+                          (cl-format true "~A~40T~A~%" nm sq)))
+                      (doseq [cl cons-lines]
+                        (let [[nm [_ sq]] cl]
+                          (cl-format true "~A~40T~A~%" nm sq)))))]
+    (print-sto
+      (loop [m (into {} (sort-by #(first (last %)) (calc-diff seq-lines)))
+             nm m
+             thr 0.05]
+        (let [i (first (keys m))
+              j (second (keys m))
+              [_ s1] (m i)
+              [_ s2] (m j)
+              diff (/ (hamming-distance s1 s2) (count s1))]
+          (if (> (count nm) nseq)
+            (if (> (count m) 3)
+              (recur (dissoc m i j)
+                     (if (< diff thr) (dissoc nm j) nm)
+                     thr)
+              (recur nm
+                     (if (< diff thr) (dissoc nm j) nm)
+                     (+ thr 0.01)))
+            nm))))))
 
  
 (defn check-sto
@@ -171,21 +229,6 @@
      :else
      (prn "sto is good"))))
         
-(defn join-sto-fasta-file
-  "Block/join unblocked sequence lines in a sto or fasta file.  For
-   sto files ORIGIN is a #=GF line indicating tool origin of file.
-   For example, '#=GF AU Infernal 1.0.2'.  Defaults to nothing."
-
-  [in-filespec out-filespec
-   & {origin :origin :or {origin ""}}]
-  (let [[gc-lines seq-lines cons-lines] (join-sto-fasta-lines
-                                         in-filespec origin)]
-    (io/with-out-writer (fs/fullpath out-filespec)
-      (doseq [gcl gc-lines] (println gcl))
-      (doseq [sl seq-lines]
-        (let [[nm [id sq]] sl]
-          (cl-format true "~A~40T~A~%" nm sq))))))
-
 
 ;;; Convert STO format to ALN format (ClustalW format).  This is
 ;;; needed by some processors which cannot take a Stockholm alignment
@@ -248,6 +291,50 @@
         (doseq [sl seq-lines]
           (println sl)))
       alnout)))
+
+
+(defn check-sto
+  "Checks a sto file to ensure that there are valid characters being
+   used in the sequences consensus structure line. Will print out
+   errors in the sto file by sequence number.  Input requires a sto
+   file"
+
+  [sto]
+  (let [valid-symbols #{"A" "C" "G" "U"
+                        "-" "." ":" "_"
+                        "a" "b" "B"
+                        "(" ")" "<" ">"}
+        [_ seq-lines cons-lines] (join-sto-fasta-lines sto "")
+        [_ [_ cl]] (first cons-lines)
+        ;;adds numbers to the sequences so that they
+        ;;can be identified
+        sl (partition 2
+                      (interleave (iterate inc 1)
+                                  (reduce (fn [v [_ [_ sq]]]
+                                            (conj v (.toUpperCase sq)))
+                                          [] seq-lines)))
+        ;;checks for valid symbols
+        check-char (fn [[n s]]
+                     [n (every? #(contains? valid-symbols %)
+                                (rest (str/split #"" s)))])
+        ;;checks to see if sequences have same
+        ;;length as consensus structure
+        check-len (fn [[n s]]
+                    [n (= (count s) (count cl))])]
+    (cond
+     (some #(false? (second %)) (map #(check-char %) sl))
+     (prn "sequence contains invalid character in: "
+          (remove #(second %) (map #(check-char %) sl)))
+
+     (some #(false? (second %)) (map #(check-len %) sl))
+     (prn "sequence contains invalid length compared to cons-line in: "
+          (remove #(second %) (map #(check-len %) sl)))
+
+     (false? (second (check-char [1 cl])))
+     (prn "consensus structure contains invalid character")
+
+     :else
+     (prn "sto is good"))))
 
 
 

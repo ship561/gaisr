@@ -36,14 +36,15 @@
 
 ;;read stockholm file creates a map where the key=name val=sequence
 (defn read-sto [f]
-  (let [[_ seq-lines cons-lines] (join-sto-fasta-lines f "")
+  (let [[gc-lines seq-lines cons-lines] (join-sto-fasta-lines f "")
+        cov (first (map #(last (str/split #"\s+" %))
+                (filter #(.startsWith % "#=GC cov_SS_cons") gc-lines)))
         cl (map #(last (second %))
-                (filter #(.startsWith (first %) "#=GC SS_cons")
-                        cons-lines))
+                (filter #(.startsWith (first %) "#=GC SS_cons") cons-lines))
         sl (reduce (fn [v [_ [_ sq]]]
                   (conj v (.toUpperCase sq)))
                 [] seq-lines)]
-    (assoc {} :seqs sl :cons cl :file f)))
+    (assoc {} :seqs sl :cons cl :file f :cov cov)))
 
 (defn write-svm [out-file m]
   (doseq [i m]
@@ -311,6 +312,7 @@
    :fract fract-freqs
    :background q
    :pairs pairs
+   :cov (m :cov)
    :filename (m :file)}))
 
 (defn main-file [f]
