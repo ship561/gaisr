@@ -130,6 +130,7 @@
           (cl-format true "~A~40T~A~%" nm sq))))))
 
 
+ 
 (defn check-sto
   "Checks a sto file to ensure that there are valid characters being
    used in the sequences consensus structure line. Will print out
@@ -239,7 +240,7 @@
   [stoin alnout & {blocked :blocked :or {blocked false}}]
   (if blocked
     (sto->aln-blocked stoin alnout)
-    (let [seq-lines (filter #(not (or (= "//" %) (re-find #"^#" %)))
+    (let [seq-lines (filter #(not (or (.startsWith % "//") (re-find #"^#" %)))
                             (first (sto-GC-and-seq-lines stoin)))
           seq-lines (map #(str/replace-re #"\." "-" %) seq-lines)]
       (io/with-out-writer (fs/fullpath alnout)
