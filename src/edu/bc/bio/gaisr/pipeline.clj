@@ -3,7 +3,7 @@
 ;;                              P I P E L I N E                             ;;
 ;;                                                                          ;;
 ;;                                                                          ;;
-;; Copyright (c) 2011 Trustees of Boston College                            ;;
+;; Copyright (c) 2011-2012 Trustees of Boston College                       ;;
 ;;                                                                          ;;
 ;; Permission is hereby granted, free of charge, to any person obtaining    ;;
 ;; a copy of this software and associated documentation files (the          ;;
@@ -48,11 +48,15 @@
         [clojure.contrib.pprint
          :only (cl-format compile-format)]
 
-        [edu.bc.log4clj
-         :only [create-loggers log>]]
+        [edu.bc.log4clj :only [create-loggers log>]]
         edu.bc.utils
+        edu.bc.utils.probs-stats
         edu.bc.bio.seq-utils
-        edu.bc.bio.seq-utils2
+        edu.bc.bio.sequtils.files
+        edu.bc.bio.sequtils.tools
+
+        [edu.bc.bio.job-config :only [parse-config-file]]
+
         [edu.bc.bio.gaisr.operon-ctx
          :only [get-region]]
         [edu.bc.bio.gaisr.actions
@@ -452,6 +456,18 @@
 ;;; (in the often case of only one, just take that).
 
 
+(defn get-generic-sto-locs [stofile-lazyseq]
+  (reduce (fn[m s-loc]
+            (let [[nm loc] (str/split #"/" s-loc)
+                  [nm v] (str/split #"\." nm)
+                  [s e] (map #(Integer. %) (str/split #"-" loc))
+                  x s
+                  s (if (< s e) s e)
+                  e (if (= s e) x e)]
+              (assoc m nm (conj (get m nm []) [s e]))))
+          {} (map #(first (str/split #" " %))
+                  (filter #(re-find #"^N(C|S|Z)" %) stofile-lazyseq))))
+
 (defn get-cmfinder-sto-locs [stofile-lazyseq]
   (reduce (fn [m s-loc]
             (let [[nm loc] (str/split #":" s-loc )
@@ -483,12 +499,14 @@
         file-fmt (cond
                   (re-find #"CMfinder" fmt-line) :cmfinder
                   (re-find #"Infernal" fmt-line) :infernal
+                  (re-find #"ORIGINAL_MOTIF" fmt-line) :generic
                   :else (raise :type :unknown-sto-fmt
                                :args [stofile fmt-line]))
         rem-file (drop 2 stofile-lazyseq)]
     (case file-fmt
           :cmfinder (get-cmfinder-sto-locs rem-file)
-          :infernal (get-infernal-sto-locs rem-file))))
+          :infernal (get-infernal-sto-locs rem-file)
+          :generic  (get-generic-sto-locs rem-file))))
 
 
 (defn get-cm-stofile [cmfile]
@@ -632,20 +650,22 @@
 
 
 (defn cmsearch-out-csv [cmsearch-out]
-  (let [csv-file (str/replace-re #"\.out$" ".csv" cmsearch-out)
-        dup-file (str/replace-re #"\.out$" ".dup.csv" cmsearch-out)
-        [sto-loc-map hit-map hit-seq-map] (cmsearch-group-hits cmsearch-out)
-        hit-parts (map #(cmsearch-hit-parts % hit-seq-map) hit-map)
-        groups (group-hit-parts sto-loc-map hit-parts)
-        good (map #(csv/csv-to-stg (map str %)) (remove-dups (:good groups)))
-        dups (map #(csv/csv-to-stg (map str %)) (:bad groups))]
-    (io/with-out-writer (io/output-stream csv-file)
-      (println +cmsearch-csv-header+)
-      (doseq [x good] (println x)))
-    (io/with-out-writer (io/output-stream dup-file)
-      (println +cmsearch-csv-header+)
-      (doseq [x dups] (println x)))
-    [good dups]))
+  (if (fs/empty? cmsearch-out)
+    [[] []]
+    (let [csv-file (str/replace-re #"\.out$" ".csv" cmsearch-out)
+          dup-file (str/replace-re #"\.out$" ".dup.csv" cmsearch-out)
+          [sto-loc-map hit-map hit-seq-map] (cmsearch-group-hits cmsearch-out)
+          hit-parts (map #(cmsearch-hit-parts % hit-seq-map) hit-map)
+          groups (group-hit-parts sto-loc-map hit-parts)
+          good (map #(csv/csv-to-stg (map str %)) (remove-dups (:good groups)))
+          dups (map #(csv/csv-to-stg (map str %)) (:bad groups))]
+      (io/with-out-writer (io/output-stream csv-file)
+        (println +cmsearch-csv-header+)
+        (doseq [x good] (println x)))
+      (io/with-out-writer (io/output-stream dup-file)
+        (println +cmsearch-csv-header+)
+        (doseq [x dups] (println x)))
+      [good dups])))
 
 
 (defn gen-cmsearch-csvs [cmsearch-out-dir]
@@ -721,6 +741,17 @@
 (defn directory-hitfnas [directory]
   (fs/directory-files directory ".hitfna"))
 
+
+(defn cms->calibrated-cms [cms & {par :par :or {par 4}}]
+  (loop [cnms (ensure-vec cms)
+         results []]
+    (let [nextgrp (take 3 cms)]
+      (if (empty? nextgrp)
+        (flatten results)
+        (recur
+         (drop 3 cms)
+         (conj results
+               (doall (pmap #(cmcalibrate % :par par) nextgrp))))))))
 
 (defn mostos->calibrated-cms [mostos & {par :par :or {par 4}}]
   (loop [mostos (ensure-vec mostos)
@@ -801,6 +832,86 @@
                   (fs/listdir base))))))
 
 
+;;; Running pipeline via config files and directives
+
+(comment
+
+  (use '[edu.bc.bio.job-config :only (parse-config-file)])
+  (fs/directory-files "/home/kaila/Bio/STOfiles/STO-3-100" "sto")
+  (fs/exists?
+   ((parse-config-file "/home/kaila/Bio/STOfiles/STO-3txt") :gen-csvs))
+)
+
+
+(defn chk-stos [stofiles]
+  (let [chk-info (filter (fn [f]
+                           (let [r (check-sto f :printem false)]
+                             (when (not= r :good) [f r])))
+                         stofiles)]
+    (when (seq chk-info)
+      (raise :type :badsto :chk-info chk-info))))
+
+(defn do-cmbuild-calibrate [stofiles]
+  (doall (mostos->calibrated-cms stofiles)))
+
+(defn do-cmbuild [stofiles]
+  {:pre [(seq stofiles)]}
+  (map #(cmbuild %) stofiles))
+
+(defn do-calibrate [cmfiles]
+  {:pre [(seq cmfiles)]}
+  (cms->calibrated-cms cmfiles))
+
+(defn do-cmsearch [hfs-cmss]
+  (doall (map (fn[[hf cms]]
+                (cms&hitfna->cmsearch-out cms hf :eval 100.0))
+              hfs-cmss)))
+
+
+(defn run-config-job [job-config-file]
+  (let [config (parse-config-file job-config-file)
+        stodir (config :stodir)
+        cmdir (config :cmdir)
+        hitdir (config :hitfile-dir)
+        stos (or (seq (map #(fs/join stodir %) (config :cmbuilds)))
+                 (seq (fs/directory-files stodir "sto")))
+        cms  (or (seq (map #(fs/join cmdir %) (config :calibrates)))
+                 (seq (fs/directory-files cmdir "cm")))
+        cmsearchs (config :cmsearchs)
+        hfs-cmss (map (fn[[hf cms]]
+                        [(fs/join hitdir hf)
+                         (map #(fs/join cmdir %) cms)])
+                      cmsearchs)]
+
+    (when (config :cmbuild) (chk-stos stos))
+
+    (cond
+     (and (config :cmbuild) (config :cmcalibrate))
+     (prn (catch-all (do-cmbuild-calibrate stos)))
+
+     (config :cmbuild)
+     (prn (catch-all (do-cmbuild stos)))
+
+     ;; Note, can't get here unless we have _only_ calibrate directive
+     ;; (no build), and so cms can't legitimately be nil.  That is a
+     ;; precondition check in do-calibrate
+     (config :cmcalibrate)
+     (prn (catch-all (do-calibrate cms))))
+
+    ;; Map over all cmsearch requests
+    (when (and cmsearchs (seq hfs-cmss))
+      (prn (catch-all (do-cmsearch hfs-cmss))))
+
+    ;; Generate csvs for all cmsearch.out's in the cmdir.  If the
+    ;; csvdir does not exist, generate it.  Place all generated csvs
+    ;; in to csvdir
+    (when-let [csvdir (config :gen-csvs)]
+      (when (not (fs/exists? csvdir)) (fs/mkdir csvdir))
+      (let [x (gen-cmsearch-csvs cmdir)
+            csvs (fs/directory-files cmdir "csv")]
+        (doseq [csv csvs]
+          (let [fname (fs/basename csv)]
+            (fs/rename csv (fs/join csvdir fname))))))))
 
 
 

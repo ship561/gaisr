@@ -3,7 +3,7 @@
 ;;                         P O S T - D B - C S V                            ;;
 ;;                                                                          ;;
 ;;                                                                          ;;
-;; Copyright (c) 2011 Trustees of Boston College                            ;;
+;; Copyright (c) 2011-2012 Trustees of Boston College                       ;;
 ;;                                                                          ;;
 ;; Permission is hereby granted, free of charge, to any person obtaining    ;;
 ;; a copy of this software and associated documentation files (the          ;;
@@ -46,13 +46,15 @@
             [clojure.zip :as zip]
             [clojure.contrib.io :as io]
             [clojure.xml :as xml]
-            [clojure.java.shell :as sh]
             [edu.bc.fs :as fs])
 
   (:use edu.bc.utils
         [edu.bc.log4clj
          :only [create-loggers log>]]
-        edu.bc.bio.seq-utils
+	
+        edu.bc.bio.sequtils.files
+	edu.bc.bio.sequtils.tools
+	
         [edu.bc.bio.gaisr.db-actions
          :only [+start-delta+ base-info-query hit-features-query]]
 
@@ -306,11 +308,11 @@
                               (slurp (fs/fullpath cmsearch-csv)))))))
 
 (defn ev-freq-ss [dirdir ev-cutoff outss-filespec]
-  (let [ev-cnts
-        (dodir dirdir
-               #(butlast (drop 1 (sort (filter fs/directory?
-                                               (fs/directory-files % "")))))
-               #(do [(fs/basename %) (freq % ev-freq ev-cutoff)]))
+  (let [ev-cnts (fs/dodir
+                 dirdir
+                 #(butlast (drop 1 (sort (filter fs/directory?
+                                                 (fs/directory-files % "")))))
+                 #(do [(fs/basename %) (freq % ev-freq ev-cutoff)]))
         cols (csv/csv-to-stg (cons "Names" (map first ev-cnts)))
         rows (apply map vector (cons (map first (second (first ev-cnts)))
                                      (map #(map second (second %)) ev-cnts)))

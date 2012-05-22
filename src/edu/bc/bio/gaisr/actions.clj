@@ -3,7 +3,7 @@
 ;;                               A C T I O N S                              ;;
 ;;                                                                          ;;
 ;;                                                                          ;;
-;; Copyright (c) 2011 Trustees of Boston College                            ;;
+;; Copyright (c) 2011-2012 Trustees of Boston College                       ;;
 ;;                                                                          ;;
 ;; Permission is hereby granted, free of charge, to any person obtaining    ;;
 ;; a copy of this software and associated documentation files (the          ;;
@@ -50,7 +50,7 @@
   (:use clojure.contrib.math
         edu.bc.utils
         [edu.bc.log4clj :only [create-loggers log>]]
-        edu.bc.bio.seq-utils
+        edu.bc.bio.sequtils.files
 
         [edu.bc.bio.gaisr.db-actions
          :only [seq-query feature-query names->tax]]
@@ -112,20 +112,32 @@
           "Action Request: ~A: ~A" user action)
     (cond
      (= action "genfasta")
-     (let [dir (get-user-local-dir user)
-           fname (args :filename)
-           xform #(subs % 0 (. % indexOf ":"))
-           save-filespec (fs/fullpath (str dir fname ".txt"))
-           entry-filespec (fs/fullpath (str dir fname ".ent"))
-           fasta-filespec (-> (str/split #"\$\$" selections)
-                              (save-content-xform save-filespec xform)
-                              (gen-entry-file entry-filespec)
-                              (entry-file->fasta-file :loc true))]
-       (log> "rootLogger" :info "~A and ~A" entry-filespec fasta-filespec)
-       {:type :json
-        :body (json/json-str
-               (cl-format nil "Entry File: '~A',~%Fasta File: '~A'"
-                          save-filespec fasta-filespec))})
+     (let [dir (get-user-local-dir user)]
+       (cond
+        (not (fs/exists? dir))
+        {:type :json
+         :body (json/json-str
+                {:error (cl-format nil "Dir '~A' Does not exist" dir)})}
+
+        (not (fs/writeable? dir))
+        {:type :json
+         :body (json/json-str
+                {:error (cl-format nil "Dir '~A' Permission denied" dir)})}
+
+        :else
+        (let [fname (args :filename)
+              xform #(subs % 0 (. % indexOf ":"))
+              save-filespec (fs/fullpath (str dir fname ".txt"))
+              entry-filespec (fs/fullpath (str dir fname ".ent"))
+              fasta-filespec (-> (str/split #"\$\$" selections)
+                                 (save-content-xform save-filespec xform)
+                                 (gen-entry-file entry-filespec)
+                                 (entry-file->fasta-file :loc true))]
+          (log> "rootLogger" :info "~A and ~A" entry-filespec fasta-filespec)
+          {:type :json
+           :body (json/json-str
+                  (cl-format nil "Entry File: '~A',~%Fasta File: '~A'"
+                             save-filespec fasta-filespec))})))
 
      (= action "stocsv-match")
      (let [sto (args :sto)
