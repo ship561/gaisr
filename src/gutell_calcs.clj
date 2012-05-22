@@ -2,7 +2,7 @@
   (:require [clojure.contrib.string :as str]
             [clojure.contrib.io :as io]
             [incanter.stats :as stats]
-            [incanter.core :as math]
+            [clojure.contrib.math :as math]
             [clojure.set :as set]
             [clojure-csv.core :as csv]
             [clojure.java.shell :as shell]
@@ -106,7 +106,7 @@
             (contains? (set
                         (apply concat (map #(vec %) bp-loc)))
                        [i j]))
-          info))
+          (conj info 1)))
 
 (defn mutual_info_not_bp
   "returns a vector of mutual information only at positions where
@@ -148,14 +148,12 @@
                       (let [b1 (second (nth freqs i))
                             b2 (second (nth freqs j))
                             fb1 (frequencies b1)
-                            fb2 (frequencies b2)
-                            tot1 (sum (vals fb1))
-                            tot2 (sum (vals fb2))]
+                            fb2 (frequencies b2)]
                         (assoc m [i j]
                                (+ 0.00001 (sum
                                            (map (fn [x y]
-                                                  (* (/ (get fb1 x 0) tot1)
-                                                     (/ (get fb2 y 0) tot2)))
+                                                  (* (/ (get fb1 x 0) (sum fb1))
+                                                     (/ (get fb2 y 0) (sum fb2))))
                                                 ["A" "C" "G" "U" "U" "G"] ["U" "G" "C" "A" "G" "U"]))))))
                     {} all-loc)]
     (reduce (fn [m [i j]]
@@ -164,8 +162,8 @@
             {} all-loc)))
 
 (defn R
-  "Function returns a map where k=[i j] and v=[covi covj Hx Hy Hxy M
-   Mxyr R1 R2] cov is the covariance at a location"
+  "Function returns a map where k=[i j] and v=[covi covj bi bj Hx Hy
+   Hxy M Mxyr R1 R2] cov is the covariance at a location"
   
   [profile]
   (let [len (count (first (profile :seqs)))
@@ -184,7 +182,9 @@
                     (= "?" (str (.charAt cov i)))
                     -1
                     :else
-                    (Integer/parseInt (str (.charAt cov i)))))]
+                    (Integer/parseInt (str (.charAt cov i)))))
+        commonbase (fn [x] (first (last (sort-by val (second (nth fract-map x))))))
+        ]
     (reduce (fn [m [i j]]
               (let [Hx (get H i)
                     Hy (get H j)
@@ -192,9 +192,12 @@
                     M (get Mxy [i j])
                     Mr (get Mxyr [i j])
                     covi (cov->int i)
-                    covj (cov->int j)]
+                    covj (cov->int j)
+                    bi (commonbase i)
+                    bj (commonbase j)]
                 (assoc m [i j]
-                       [covi covj Hx Hy Hxy M Mr
+                       [covi covj bi bj
+                        Hx Hy Hxy M Mr
                         (if (zero? Hx) 0 (/ M Hx))
                         (if (zero? Hy) 0 (/ M Hy))])))
             {} (for [i (range len)
@@ -215,20 +218,31 @@
      (io/with-out-writer outfile (print_out info))))
 
 (defn main
-  "launches the default way to calcuate Hx Hy Hxy M R1 R2. It will print
-  out a default file at the current time."
+  "launches the default way to calcuate covi covj bi bj Hx Hy Hxy M
+   Mxyr R1 R2 class pval. It will print out a default file at the
+   current time."
   
-  [f]
-  (let [p (profile (read-sto f))
+  [sto fpval]
+  (let [p (profile (read-sto sto))
         mi (R p)
         loc (p :pairs)
         mi (remove_gap_col mi (fractpairs_contain_nogaps p) 0.5) ;;remove gapped columns
-        x (mutual_info_only_bp mi loc) ;;intersection between
-        ;;mi and loc
-        y (mutual_info_not_bp mi loc)] ;;difference between
-    ;;mi and loc
-    (print_out x (str (subs f 0 (- (count f) 3)) "onlybp.csv"))
-    (print_out y (str (subs f 0 (- (count f) 3)) "notbp.csv"))))
+        x (group-by (fn [[[i j] _]]
+                      (contains? (set
+                                  (apply concat (map #(vec %) loc)))
+                                 [i j]))
+                    mi)
+        y (merge (reduce (fn [m a]
+                           (assoc m (key a) (conj (val a) 0)))
+                         {} (into {} (x false)))
+                 (reduce (fn [m a]
+                           (assoc m (key a) (conj (val a) 1)))
+                         {} (into {} (x true))))
+        pvals (reduce (fn [m [[x y z]]]
+                        (assoc m [(Integer/parseInt x) (Integer/parseInt y)] z))
+                      {} (map #(csv/parse-csv (str/replace-re #" " "" %)) (io/read-lines fpval)))]
+    (print_out (merge-with conj y (select-keys pvals (keys y))) (str (subs sto 0 (- (count sto) 3)) "all.csv"))
+    ))
 
 ;; (let [p (profile (read-sto "/home/kitia/Downloads/S15_101711UBedit.sto"))
 ;;                    mi (R p)
@@ -299,6 +313,62 @@
 
 
                
-               
+(defn col->prob [col]
+  (let [P (frequencies col)
+        b (cond
+           (char? (first (keys P)))
+           #{\A \C \G \U}
+           (= (count (first (keys P))) 1)
+           #{"A" "U" "G" "C"}
+           :else
+           #{"AA" "AC" "AG" "AU"
+             "CA" "CC" "CG" "CU"
+             "GA" "GC" "GG" "GU"
+             "UA" "UC" "UG" "UU"})
+        remove-gaps (fn [m]
+                      (into {} (filter #(contains? b (key %)) m )))
+        freq->prob (fn [f]
+                     (reduce (fn [m [k v]]
+                               (assoc m k (/ (+ 0.0 v)
+                                             (+ 0.0 (sum f)))))
+                             {} f))]
+    (freq->prob (remove-gaps (merge (into {} (map #(vector % 0) b))
+                                    P)))))
                                               
-                                              
+(defn KL
+  "kullback leibler divergence takes in a column and a model
+   distribution Q in the form of a key value map right answer for
+   sample.sto = (0.8239592165010823 0.0 1.3862943611198906
+   1.3862943611198906 1.3862943611198906 1.3862943611198906
+   0.8239592165010823 0.34657359027997264)"
+
+  [P & {Q :Q :or {Q (into {}
+                          (map #(vector % 0.25) #{\A \C \G \U "A" "U" "G" "C"})) }}]                                              
+  (sum (for [i (keys P)]
+         (let [p (P i)
+               q (if-not (nil? (Q i)) ;;determine background probabilites
+                               ;;for 1 base or multiple bases
+                   (Q i)
+                   (reduce (fn [x y]
+                             (* x (get Q y)))
+                          1 (seq i)))]
+           (if (or (zero? p) (zero? q))
+             0
+             (* p (Math/log (/ p q))))))))
+
+(defn JS [P & {Q :Q :or {Q (into {} (map #(vector % 0.25) #{\A \C \G \U "A" "U" "G" "C"})) }}]
+  (let [Q (if (char? (first (keys P))) ;;determine background probabilites for 1
+                         ;;base or multiple bases
+            Q
+            (reduce (fn [m k]
+                      (assoc m k
+                             (reduce (fn [x y]
+                                       (* x (get Q y)))
+                                     1 (seq k))))
+                    {} (keys P)))
+        M (reduce (fn [m k]
+                    (assoc m k (/ (+ (P k) (Q k)) 2)))
+                  {} (keys P))]
+    (prn M P)
+    (+ (* 0.5 (KL P :Q M)) (* 0.5 (KL Q :Q M)))))
+

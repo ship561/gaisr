@@ -495,8 +495,8 @@
   [s1 s2]
   (let [freq-s1 (set s1)
         freq-s2 (set s2)
-        c1 (freq-sum (set/intersection freq-s1 freq-s2))
-        c2 (freq-sum (set/union freq-s1 freq-s2))]
+        c1 (sum (set/intersection freq-s1 freq-s2))
+        c2 (sum (set/union freq-s1 freq-s2))]
     (/ c1 c2)))
 
 
