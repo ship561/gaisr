@@ -51,9 +51,12 @@
         edu.bc.utils
         [edu.bc.log4clj :only [create-loggers log>]]
         edu.bc.bio.sequtils.files
+        [edu.bc.bio.sequtils.tools :only [correct-sto-coordinates]]
 
         [edu.bc.bio.gaisr.db-actions
          :only [seq-query feature-query names->tax]]
+        [edu.bc.bio.gaisr.pipeline
+         :only [run-config-job-checked]]
         [edu.bc.bio.gaisr.post-db-csv
          :only [efile-csvhits->names-and-matches process-hit-file]]
 
@@ -94,7 +97,7 @@
 ;;; files, and fasta files from Scribl hit selections.
 ;;;
 (defn save-content-xform [entries file f]
-  (prn entries)
+  #_(prn entries)
   (io/with-out-writer (io/file-str file)
     (doseq [e entries]
       (println e)))
@@ -126,13 +129,15 @@
 
         :else
         (let [fname (args :filename)
-              xform #(subs % 0 (. % indexOf ":"))
+              ;; XFORM grabs the entry, but also must remove the fugly
+              ;; name hack of post-db-csv/twiddle-name...
+              xform #(str/replace-re #"/[0-9] " " " (subs % 0 (.indexOf % ":")))
               save-filespec (fs/fullpath (str dir fname ".txt"))
               entry-filespec (fs/fullpath (str dir fname ".ent"))
               fasta-filespec (-> (str/split #"\$\$" selections)
                                  (save-content-xform save-filespec xform)
                                  (gen-entry-file entry-filespec)
-                                 (entry-file->fasta-file :loc true))]
+                                 (entry-file->fasta-file))]
           (log> "rootLogger" :info "~A and ~A" entry-filespec fasta-filespec)
           {:type :json
            :body (json/json-str
@@ -188,6 +193,109 @@
 
 
 
+(defmacro remote-try
+  [& body]
+  `(try
+     (do ~@body)
+     (catch clojure.contrib.condition.Condition c#
+       {:body (json/json-str {:info (str (dissoc (meta c#) :stack-trace))
+                              :stat "error"})})
+     (catch Exception e#
+       {:body (json/json-str {:info (str {:err (with-out-str (print e#))})
+                              :stat "error"})})))
+
+(defn get-remote-cemap
+  "Transform the condition/exception map to a list of strings.  Remove
+   stack-trace and err key/vals, place the :err value as first
+   element, all others are strings of key and value as (str k \" \" v)
+  "
+  [cemap]
+  (prn :*** cemap)
+  (let [emsg (if-let [em (cemap :err)] em "Error, see below...")]
+    (cons emsg
+          (keep (fn[[k v]]
+                  (when (not (in k [:err :stack-trace]))
+                    (let [v (if (coll? v) (doall v) v)]
+                      (str k " " v))))
+                cemap))))
+
+
+(defn remote-check-sto
+  "Run check-sto on uploaded file upload-file."
+  [upload-file]
+  (let [result (check-sto upload-file :printem false)]
+    {:body (json/json-str {:info (if (= result :good)
+                                   "sto is good"
+                                   (cons "***BAD sto" result))
+                           :stat "success"})}))
+
+(defn remote-correct-sto-coordinates
+  "Run coordinate corrector for user on uploaded file upload-file."
+  [user filename upload-file]
+  (prn :***RCSC upload-file)
+  (remote-try
+   (let [resultfn
+          (fn[[file res]]
+            (if (map? res)
+              (cons :error (cons file (get-remote-cemap res)))
+              (cons :good (map #(if (fs/exists? %) (slurp %) []) res))))
+          jobid (add *jobs* user
+                     `[(print-str ~filename)
+                       (correct-sto-coordinates ~upload-file)]
+                     resultfn)]
+      (start *jobs* jobid)
+      {:body (json/json-str
+              {:info [:started :started
+                      (str filename " coordinate correction started, jobid ")
+                      (str jobid)]
+               :stat "success"})})))
+
+
+(defn remote-run-config
+  "Run a config job based on information in uploaded config-file"
+  [user filename config-file]
+  (remote-try
+    (let [resultfn
+          (fn[[file res]] ; input vec of task results
+            (prn :### file res)
+            (cond
+             (map? res) (cons :error (cons file (get-remote-cemap res)))
+             (not= :good res) (cons :error (cons file (seq (ensure-vec res))))
+             :else (cons :good (list (str "Completed job defined by: " file)
+                                     (str "Result: " res)))))
+          jobid (add *jobs* user
+                     `[(print-str ~filename)
+                       (run-config-job-checked ~config-file :printem false)]
+                     resultfn)]
+      (start *jobs* jobid)
+      {:body (json/json-str {:info [:started :started
+                                    (str filename " job started, jobid ")
+                                    (str jobid)]
+                             :stat "success"})})))
+
+(defn remote-check-job
+  "Check status, and if done, return results for job JOBID of user USER"
+  [user jobid]
+  ;; This 'works', but it is fugly and I don't like it.  Needs to be
+  ;; refactored and cleaned up.
+  (remote-try
+   (let [stat (catch-all (check-job jobid))
+         res (if (= stat :done)
+               (seq (ensure-vec (result *jobs* jobid)))
+               (str "currently "
+                    (if (= :in-process (result *jobs* jobid :t2))
+                      "running"
+                      (str (result *jobs* jobid :t2)))))
+         [jstat res] (if (= stat :done)
+                       [(first res) (rest res)]
+                       [:running res])]
+     {:body (json/json-str
+             {:info (concat
+                     [stat jstat (str "Job " jobid " for user '" user "'")]
+                     (ensure-vec res))
+              :stat "success"})})))
+
+
 (defn upload-file [args reqmap]
   (log> "rootLogger" :info "UPLOAD ~S, Cookies: ~S" args (reqmap :cookies))
   (let [user (get-in reqmap [:cookies "user" :value])
@@ -209,6 +317,20 @@
       (= upload-type "hitfile")
       (do (io/copy upload-file (io/file-str local-out))
           {:body (json/json-str (process-hit-file local-out))})
+
+      (= upload-type "check-sto")
+      (remote-check-sto upload-file)
+
+      (= upload-type "correct-sto-coordinates")
+      (let [tmp-sto (fs/replace-type (.getPath upload-file) ".sto")]
+        (io/with-out-writer tmp-sto (print (slurp upload-file)))
+        (remote-correct-sto-coordinates user filename tmp-sto))
+
+      (= upload-type "run-config")
+      (remote-run-config user filename (.getPath upload-file))
+
+      (= upload-type "check-job")
+      (remote-check-job user (read-string (slurp upload-file)))
 
       (= upload-type "name2tax")
       {:body (json/json-str
