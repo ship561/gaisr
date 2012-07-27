@@ -188,7 +188,7 @@
   (reduce
    (fn[x y]
      (if (= x :ignore) y (fr x y)))
-   :ignore (apply map f colls)))
+   :ignore (apply map f (cons coll1 colls))))
 
 (defn reducem
   "Multiple collection reduction.  FR is a function of two arguments -
@@ -250,24 +250,33 @@
        (pxmap (fn[v] (apply f v)) par (apply transpose coll1 coll2 colls)))))
 
 
-(defn random-subset
-  "Create a \"random\" N element subset of the collection s treated as a set,
-   i.e., s with no duplicate elements.  If n <= 0, return #{}, the
-   empty set.  If (count (set s)) <= n, return (set s).  Otherwise,
-   pick N random elements from (set s) to form subset.
-  "
-  [s n]
-  (let [s (vec (set s))]
-    (cond
-     (<= n 0) #{}
-     (<= (count s) n) (set s)
-     :else
-     (loop [ss #{(rand-nth s)}]
-       (if (= (count ss) n)
-         ss
-         (recur (conj ss (rand-nth s))))))))
+;;; "Had to" bring this in from COMB name space as it was private, but
+;;; needed to apply it here for index return version of combins
+(defn index-combinations
+  "Generates all n-tuples, as indices, over set cardinality cnt"
+  [n cnt]
+  (lazy-seq
+   (let [c (vec (cons nil (for [j (range 1 (inc n))] (+ j cnt (- (inc n)))))),
+         iter-comb
+         (fn iter-comb [c j]
+           (if (> j n) nil
+               (let [c (assoc c j (dec (c j)))]
+                 (if (< (c j) j) [c (inc j)]
+                     (loop [c c, j j]
+                       (if (= j 1) [c j]
+                           (recur (assoc c (dec j) (dec (c j))) (dec j)))))))),
+         step
+         (fn step [c j]
+           (cons (rseq (subvec c 1 (inc n)))
+                 (lazy-seq (let [next-step (iter-comb c j)]
+                             (when next-step
+                               (step (next-step 0) (next-step 1)))))))]
+     (step c 1))))
 
-
+;;; "Had to" change combins to directly use index-combinations for two
+;;; return version case.
+;;;
+;;; Originally just (lazy-seq (map vec (comb/combinations coll k)))
 (defn combins
   "Return the set of all K element _combinations_ (not permutations)
    formed from coll.  Coll does not need to be a set.  In particular,
@@ -284,13 +293,48 @@
        \"AG\" \"AU\" \"GG\" \"GC\" \"GG\" \"GU\" \"GC\" \"GG\" \"GU\"
        \"CG\" \"CU\" \"GU\")
   "
-  [k coll]
-  (lazy-seq (map vec (comb/combinations coll k))))
+  [k coll & [indices]]
+  (let [v (vec (reverse coll))]
+    (if (zero? k) (list [])
+        (let [cnt (count coll)]
+          (cond (> k cnt) nil
+                (= k cnt) (list (vec coll))
+                ;; Just the sets
+                (not indices)
+                (map #(vec (map v %)) (index-combinations k cnt))
+
+                :else ; Sets and their indices
+                [(map #(vec (map v %)) (index-combinations k cnt))
+                 (combins k (range cnt))]
+                )))))
 
 (defn choose-k
   "Synonym for combins"
   [k coll]
   (combins k coll))
+
+
+(defn subsets
+  "All the subsets of elements of coll"
+  [coll]
+  (mapcat #(combins % coll) (range (inc (count coll)))))
+
+(defn random-subset
+  "Create a \"random\" N element subset of the collection s treated as a set,
+   i.e., s with no duplicate elements.  If n <= 0, return #{}, the
+   empty set.  If (count (set s)) <= n, return (set s).  Otherwise,
+   pick N random elements from (set s) to form subset.
+  "
+  [s n]
+  (let [s (vec (set s))]
+    (cond
+     (<= n 0) #{}
+     (<= (count s) n) (set s)
+     :else
+     (loop [ss #{(rand-nth s)}]
+       (if (= (count ss) n)
+         ss
+         (recur (conj ss (rand-nth s))))))))
 
 
 (defn coalesce-xy-yx
@@ -352,6 +396,7 @@
     [q (rem n d)]))
 
 
+;;; Forward decl for sum-in-parallel
 (def sum)
 
 (defn- sum-in-parallel
@@ -387,6 +432,8 @@
    (sum (fn[x y] (* x (log2 y))) :|| [1 2 3] [1 2 3])
    => 6.754887502163469
   "
+  ;; NOTE: (probably??) Should reimplement with reducem.  See for
+  ;; example, prod below...
   ([coll]
      (let [vs (if (map? coll) (vals coll) coll)]
        (apply + vs)))
@@ -412,6 +459,37 @@
           0 (first colls))))))
 
 
+(defn prod
+  "Return the product of the numbers in COLL.  If COLL is a map,
+   return the product of the (presumed all numbers) in (vals coll).
+   For function F versions, return the product of x in COLL (f x) or
+   prod x in COLL1, y in COLL2 (f x y) or prod x1 in C1, x2 in C2,
+   ... xn in Cn (f x1 ... xn).
+
+   By default, multiplication proceeds on the results of F applied
+   over the _cross product_ of the collections.  If multiplication
+   should proceed over the collections in parallel, the first \"coll\"
+   given should be the special keyword :||.  If given, this causes F
+   to be applied to the elements of colls as stepped in parallel:
+   f(coll1[i] coll2[i] .. colln[i]), i in [0 .. (count smallest-coll)].
+
+   Examples:
+
+   (prod + [1 2 3] [1 2 3])
+   => 172800 ; product of all [1 2 3] X [1 2 3] pairwise sums
+   (prod + :|| [1 2 3] [1 2 3])
+   => 48 ; product of [(+ 1 1) (+ 2 2) (+ 3 3)]
+  "
+  ([coll]
+     (let [vs (if (map? coll) (vals coll) coll)]
+       (apply * vs)))
+  ([f coll]
+     (reducem f * coll))
+  ([f coll1 coll2 & colls]
+     (let [colls (cons coll2 colls)]
+       (apply reducem f * coll1 colls))))
+
+
 (defn logb
   "Return the log to the base b _function_ of x"
   [b]
@@ -432,14 +510,14 @@
  ^{:doc
    "Named version of (logb 2).  Important enough to have a named top
     level function"
-   :arglists '([x])}
+   :arglists '[x]}
  log2 (logb 2))
 
 (def
  ^{:doc
    "Named version of (logb 10).  Important enough to have a named top
     level function"
-   :arglists '([x])}
+   :arglists '[x]}
  log10 (logb 10))
 
 
@@ -463,9 +541,11 @@
   "For positive integers N and K, compute N choose K (binomial
    coefficient): n!/((n-k)!k!)"
   [n k]
-  {:pre [(integer? n) (integer? k) (> n -1) (<= 0 k n)]}
-  (/ (reduce * (range n (- n k) -1))
-     (n! k)))
+  {:pre [(integer? n) (integer? k) (> n -1) (<= 0 k)]}
+  (if (< n k)
+    0
+    (/ (reduce * (range n (- n k) -1))
+       (n! k))))
 
 
 (defn primes
@@ -604,69 +684,6 @@
            sv
            (recur (str/drop step s)
                   (conj sv (str/take n s))))))))
-
-
-
-
-;;; Fixed cost Edit distance.
-;;;
-;;; (levenshtein "this" "")
-;;; (assert (= 0 (levenshtein "" "")))
-;;; (assert (= 3 (levenshtein "foo" "foobar")))
-;;; (assert (= 3 (levenshtein "kitten" "sitting")))
-;;; (assert (= 3 (levenshtein "Saturday" "Sunday")))
-;;; (assert (= 22 (levenshtein
-;;;   "TATATTTGGAGTTATACTATGTCTCTAAGCACTGAAGCAAA"
-;;;   "TATATATTTTGGAGATGCACAT"))
-;;;
-(defn- new-row [prev-row row-elem t]
-  (reduce
-   (fn [row [d-1 d e]]
-     (conj row (if (= row-elem e) d-1 (inc (min (peek row) d d-1)))))
-    [(inc (first prev-row))]
-    (map vector prev-row (next prev-row) t)))
-
-
-;;; -----------------------------------------------------------------
-;;; Simple vector stuff.  dot product, norm, distances, and such.
-
-
-(defn dot [v1 v2]
-  (reduce #(+ %1 %2) 0 (map #(* %1 %2) v1 v2)))
-
-(defn norm [v]
-  (math/sqrt (dot v v)))
-
-(defn vhat [v]
-  (let [n (norm v)] (vec (map #(/ % n) v))))
-
-(defn cos-vangle [v1 v2]
-  (dot (vhat v1) (vhat v2)))
-
-(defn vangle-dist [v1 v2]
-  (math/abs (dec (cos-vangle v1 v2))))
-
-(defn vecdist [v1 v2]
-  (let [v (vec (map #(- %1 %2) v1 v2))] (dot v v)))
-
-
-(defn normed-codepoints [s]
-  (vec (map #(let [nc (- % 97)]
-               (cond
-                (>= nc 0) nc
-                (= % 32) 27
-                :else 28))
-            (str/codepoints s))))
-
-(defn ngram-vec [s & {n :n :or {n 2}}]
-  (let [ngrams (word-letter-pairs s n)
-        ngram-points (map (fn [[x y]]
-                            (int (+ (* x 27) y)))
-                          (map normed-codepoints ngrams))
-        v (int-array 784 0)]
-    (doseq [i ngram-points]
-      (aset v i 1))
-    v))
 
 
 

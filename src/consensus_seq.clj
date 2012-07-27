@@ -16,7 +16,8 @@
         net.n01se.clojure-jna
         refold
         libsvm2weka
-        edu.bc.bio.seq-utils))
+        edu.bc.bio.sequtils.files
+        edu.bc.utils))
 
 (def possible_pairs {"AU" 1 "UA" 1 "GC" 1 "CG" 1 "GU" 1 "UG" 1} )
 (def base #{"A" "C" "G" "U" "." "-"} )
@@ -42,7 +43,7 @@
         cl (map #(last (second %))
                 (filter #(.startsWith (first %) "#=GC SS_cons") cons-lines))
         sl (reduce (fn [v [_ [_ sq]]]
-                  (conj v (.toUpperCase sq)))
+                     (conj v (str/replace-re #"T" "U" (.toUpperCase sq))))
                 [] seq-lines)]
     (assoc {} :seqs sl :cons cl :file f :cov cov)))
 
@@ -123,8 +124,7 @@
   ;;(prn "Ea" Ealign "E" Eavg)
   (/ Ealign (stats/mean Eavg)))
 
-(defn sum [m]
-  (apply + (vals m)))
+
 
 
 (defn expected_qij
@@ -136,15 +136,38 @@
         k2 (keys prob2)]
     (* (get possible_pairs (str k1 k2) 0) (get prob1 k1) (get prob2 k2))))
 
-(defn fraction-base-b [freq-map]
-  (reduce (fn [m [k v]]
-            ;;(prn k v (sum freq-map))
-            (if (contains? base k)
-              (assoc m k (/ v (sum freq-map)))
-              m))
-          {} freq-map))
+;; (defn fraction-base-b [freq-map]
+;;   (reduce (fn [m [k v]]
+;;             ;;(prn k v (sum freq-map))
+;;             (if (contains? base k)
+;;               (assoc m k (/ v (sum freq-map)))
+;;               m))
+;;           {} freq-map))
   
-
+(defn col->prob [col & {gaps :gaps :or {gaps false}}]
+  (let [P (frequencies col)
+        b (cond
+           (char? (first (keys P)))
+           (if gaps #{\A \C \G \U \.} #{\A \C \G \U})
+           (= (count (first (keys P))) 1)
+           (if gaps #{"A" "U" "G" "C" "."} #{"A" "U" "G" "C"})
+           :else
+           (if gaps
+             (set (for [i [\A \C \G \U \.]
+                        j [\A \C \G \U \.]]
+                    (str i j)))
+             (set (for [i [\A \C \G \U]
+                        j [\A \C \G \U]]
+                    (str i j)))))
+        remove-gaps (fn [m]
+                      (into {} (filter #(contains? b (key %)) m )))
+        freq->prob (fn [f]
+                     (reduce (fn [m [k v]]
+                               (assoc m (str k) (/ (+ 0.0 v)
+                                             (+ 0.0 (sum f)))))
+                             {} f))]
+    (freq->prob (remove-gaps (merge (into {} (map #(vector % 0) b))
+                                    P)))))
 
 
 ;;calculates the information for each base in a column and returns a
@@ -176,9 +199,10 @@
   (let [fract-map (profile :fract)
         p (profile :background)
         len (count (first (profile :seqs)))]
-    (for [i (range len)]
-      [i (sum (information_i p fract-map i))])
-    ))
+    (reduce (fn [m i]
+              (assoc m i (sum (information_i p fract-map i))))
+            {} (range len))))
+
 
 ;;calculates the fraction of base pairs at i and j where there is a
 ;;base pair and returns a map where key=[i j] value=faction
@@ -195,7 +219,13 @@
             {}  bp-loc)))
 
 
-
+(defn fraction-base-b [freq-map]
+  (reduce (fn [m [k v]]
+            ;;(prn k v (sum freq-map))
+            (if (contains? base k)
+              (assoc m k (/ v (sum freq-map)))
+              m))
+          {} freq-map))
  
 (defn mutual_info_only_bp [info bp-loc]
   "returns a vector of mutual information only at positions where
@@ -305,7 +335,7 @@
         fract-freqs (sort-by key (reduce (fn [l [n freq-map]]
                                            (assoc l n (fraction-base-b freq-map)))
                                          {} freqs))
-        q (fraction-base-b (frequencies (flatten (map #(rest (str/split #"" %)) s))))
+        q (col->prob (flatten (map #(rest (str/split #"" %)) s)) :gaps true)
         pairs (map #(refold/make_pair_table %) struct)]
   {:seqs s
    :structure struct
@@ -313,7 +343,8 @@
    :background q
    :pairs pairs
    :cov (m :cov)
-   :filename (m :file)}))
+   :filename (m :file)
+   :length  (count (first s))}))
 
 (defn main-file [f]
   (let [m (profile (read-sto f))]
