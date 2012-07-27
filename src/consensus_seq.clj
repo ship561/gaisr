@@ -288,9 +288,9 @@
   ;; (io/with-out-writer "/home/kitia/bin/gaisr/testset.csv"
   ;;   (doseq [i (base_comp_features profile)]
   ;;     (println i)))
-  (txt2csv (base_comp_features profile) "/home/kitia/bin/gaisr/testset.csv")
-  (let [mu (getpredicted (wekalibsvm "/home/kitia/bin/gaisr/mean.csv" "/home/kitia/bin/gaisr/testset.csv" "mean"))
-        sdev (getpredicted (wekalibsvm "/home/kitia/bin/gaisr/sd.csv" "/home/kitia/bin/gaisr/testset.csv" "sd"))]
+  (txt2csv (base_comp_features profile) "/home/peis/bin/gaisr/testset.csv")
+  (let [mu (getpredicted (wekalibsvm "/home/peis/bin/gaisr/mean.csv" "/home/peis/bin/gaisr/testset.csv" "mean"))
+        sdev (getpredicted (wekalibsvm "/home/peis/bin/gaisr/sd.csv" "/home/peis/bin/gaisr/testset.csv" "sd"))]
     (map (fn [x mean sdev]
            ;;(prn "x" x "mean" mean "sigma" sdev)
            (/ (- x mean) sdev))

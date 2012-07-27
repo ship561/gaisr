@@ -288,33 +288,6 @@
                     :file "")))
          s)))
 
-(defn rand_aln2
-  "Generates n random alignments based on the input alignment, f, in Clustal format.
-   This function produces a map similar to the read-sto function. The
-   map contains {:seqs :cons :file}"
-  
-  [f n]
-  (let [temp (fs/tempfile)
-        sissiz (while (fs/empty? t)
-                 (runx "SISSIz" "--rna" "-s" "-n" (str 2) "/home/peis/bin/gaisr/l10-reduced.aln" :> t :?> t))
-        sissiz (rest (str/split #"CLUSTAL W \(SISSIz 0.1 simulation\)" (sissiz :out)))
-        recombine-lines (fn [x]
-                          (reduce (fn [m l]
-                                    (let [[nm sq]
-                                          (str/split #"\s+" l)
-                                          prev (get m nm [(gen-uid) ""])]
-                                      (if-not (empty? nm)
-                                        (assoc m  nm [(first prev)
-                                                      (str (second prev) sq)])
-                                        m)))
-                                  {} (drop-while empty? (str/split-lines x))))]
-    (io/with-out-writer temp
-      (doseq [i sissiz]
-        (doseq [[nm [uid sq]] (sort-by #(first (second %)) (recombine-lines i))]
-          (println nm uid sq))
-        (println ">")))
-    temp))
-
 
 (defn pval
   "Reads in a sto file and n = an integer. The sto file is used to
