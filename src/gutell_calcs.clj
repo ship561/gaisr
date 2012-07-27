@@ -5,15 +5,11 @@
             [clojure.contrib.math :as math]
             [clojure.set :as set]
             [clojure-csv.core :as csv]
-            [clj-shell.shell :as shell]
-            [clojure.contrib.seq :as seq]
-            [edu.bc.fs :as fs])
-  (:use [consensus_seq
-         :only [read-sto profile]]
-        [clojure.contrib.condition
-         :only (raise handler-case *condition* print-stack-trace)]
+            [clojure.java.shell :as shell]
+            [clojure.contrib.seq :as seq])
+  (:use [consensus_seq :only [read-sto profile col->prob]]
         [edu.bc.utils]
-        [edu.bc.bio.seq-utils]))
+        [edu.bc.bio.sequtils.files]))
 
 
 (defn fractpairs_contain_nogaps
@@ -51,13 +47,13 @@
 
 (defn entropy [profile]
   (let [fract-map (profile :fract)
-        len (count (first (profile :seqs)))
+        len (profile :length)
         ;;sum over all bases using -p*log2(p) at position i
-        entropy_i (fn [p-baseb i] 
+        H (fn [p-baseb] 
                     (sum
                      (map #(* -1 % (Math/log %)) (vals p-baseb))))]
     (reduce (fn [m i]
-              (assoc m i (entropy_i (second (nth fract-map i)) i)))
+              (assoc m i (H (second (nth fract-map i)))))
             {} (range len))
     ))
 
@@ -86,7 +82,7 @@
   (let [Hx (get Hi i)
         Hy (get Hi j)
         Hxy (get Hij [i j])]
-    (+ Hx Hy (* -1 Hxy) ))
+    (+ Hx Hy (- Hxy) ))
   )
 
 (defn mutual_info [profile]
@@ -100,28 +96,6 @@
     (reduce (fn [m [i j]]
               (assoc m [i j] (mutual_info_ij Hx Hxy i j)))
             {}  all-loc)))
-
-(defn mutual_info_only_bp
-  "returns a vector of mutual information only at positions where
-   there is base pairing provided by alignment."
-  
-  [info bp-loc]
-  (filter (fn [[[i j] _]]
-            (contains? (set
-                        (apply concat (map #(vec %) bp-loc)))
-                       [i j]))
-          (conj info 1)))
-
-(defn mutual_info_not_bp
-  "returns a vector of mutual information only at positions where
-   there is base pairing provided by alignment."
-  
-  [info bp-loc]
-  (remove (fn [[[i j] _]]
-            (contains? (set
-                        (apply concat (map #(vec %) bp-loc)))
-                       [i j]))
-          info))
 
 (defn relative_mutual_info
   "Relative mutual information calculated based on only base pairing bases"
@@ -314,31 +288,8 @@
                     n))])))
 
 
-
-
                
-(defn col->prob [col]
-  (let [P (frequencies col)
-        b (cond
-           (char? (first (keys P)))
-           #{\A \C \G \U}
-           (= (count (first (keys P))) 1)
-           #{"A" "U" "G" "C"}
-           :else
-           #{"AA" "AC" "AG" "AU"
-             "CA" "CC" "CG" "CU"
-             "GA" "GC" "GG" "GU"
-             "UA" "UC" "UG" "UU"})
-        remove-gaps (fn [m]
-                      (into {} (filter #(contains? b (key %)) m )))
-        freq->prob (fn [f]
-                     (reduce (fn [m [k v]]
-                               (assoc m k (/ (+ 0.0 v)
-                                             (+ 0.0 (sum f)))))
-                             {} f))]
-    (freq->prob (remove-gaps (merge (into {} (map #(vector % 0) b))
-                                    P)))))
-                                              
+                                             
 (defn KL
   "kullback leibler divergence takes in a column and a model
    distribution Q in the form of a key value map right answer for
@@ -367,12 +318,12 @@
             (reduce (fn [m k]
                       (assoc m k
                              (reduce (fn [x y]
-                                       (* x (get Q y)))
+                                       (* x (get Q (str y))))
                                      1 (seq k))))
                     {} (keys P)))
         M (reduce (fn [m k]
                     (assoc m k (/ (+ (P k) (Q k)) 2)))
                   {} (keys P))]
-    (prn M P)
+    ;(prn M P)
     (+ (* 0.5 (KL P :Q M)) (* 0.5 (KL Q :Q M)))))
 
