@@ -1,9 +1,10 @@
-(ns snippet
+(ns snippets
   (:require [clojure.contrib.string :as str]
             [clojure.java.shell :as shell]
             [clojure.contrib.io :as io]
             [edu.bc.fs :as fs]
             [incanter.stats :as stats]
+            [incanter.charts :as charts]
             [clojure.set :as sets])
   (:use edu.bc.bio.seq-utils
         edu.bc.bio.sequtils.files
@@ -11,7 +12,9 @@
         edu.bc.utils.probs-stats
         ;smith_waterman
         [clojure.contrib.pprint
-         :only (cl-format compile-format)]))
+         :only (cl-format compile-format)]
+        [incanter.core :only (view)]
+        refold))
 
 (def f
   (let [info (mutual_info (profile (read-sto "/home/kitia/Downloads/S15_101711UBedit.sto")))
@@ -410,24 +413,32 @@
                          second
                          (str/split #" ")
                          first))
+
+(defn mutant-neighbor
+  "Takes a string s and finds the 3L 1-mer mutants. String can only contain
+   letters A, C, G, U."
+  
+  [s]
+  (let [s (.toUpperCase s)]
+    (flatten
+     (for [i (range (count s))]
+       (map (fn [r]
+              ;;makes new sequence with the substitution r
+              (str (subs s 0 i) r (subs s (inc i) (count s))))
+            (keys (dissoc {"A" 1 "G" 1 "U" 1 "C" 1} ;;3 other bases to sub
+                          (subs s i (inc i)))))))))
+
 (defn neutrality
-  "takes a string s and finds the 3L mutants. String can only contain
-   letters A, C, G, U. returns neutrality of each of the seq compared
+  "takes a string s and  returns neutrality of each of the seq compared
    to each of the 3L 1 neighbors mutants"
 
   [s]
-  (let [b {"A" 1 "G" 1 "U" 1 "C" 1}
-        st (fold s)
-        neighbors (fn [s]
-                    (flatten
-                     (for [i (range (count s))]
-                       (map (fn [r]
-                              (str (subs s 0 i) r (subs s (inc i) (count s))))
-                            (keys (dissoc b (subs s i (inc i)))))))) ]
+  (let [st (fold s)
+        neighbors (mutant-neighbor s) ]
     (map (fn [neighbor]
            (/ (- (count s) (levenshtein st (fold neighbor)))
               (count s)))
-         (neighbors s))))
+         neighbors)))
 
 (defn neutrality_rand
   "neutrality from finding a random seq with the same structure. if neutrality
@@ -453,7 +464,7 @@
        (map #(stats/mean (neutrality %)) cand))))
 
 
-;;est sequences to test neutrality calc. stored in a file for reading
+;;test sequences to test neutrality calc. stored in a file for reading
 ;;from later
 (let [seqs (partition-all 2 (io/read-lines "/home/kitia/bin/gaisr/trainset2/test.fa"))]
   (io/with-out-writer "/home/kitia/bin/gaisr/trainset2/neutrality.clj"
@@ -468,4 +479,179 @@
                               [name nm (count (filter #(< nm %) nc)) nc]))
                           iseq))))))))
 
+(defn Z
+  "Calculates the partition function for a structure s from i to
+  j. Currently assume homopolymer (any base can bind an y other
+  base). Energy function = 1 to count structures but needs to be
+  changed to actual energies. "
 
+  [i j S]
+  (let [n (- j i -1)
+        bp? (fn [b1 b2] ;;b1=base1 b2=base2
+              (let [bp #{"AU" "UA" "GC"  "CG" "GU" "UG"}]
+                (contains? bp (str b1 b2))))
+        E (fn [b1 b2] (if (bp? b1 b2) -1 0)) ;;Energy of basepair, E(basepair)
+        e (fn [i j S] 1#_(let [s1 (subs S i (inc i))
+                           s2 (subs S j (inc j))]
+                       (Math/exp (/ (E s1 s2) -2 310))))
+        u 0 ;;min loop size
+        ]
+    (if (<= (- j i) u) 1
+        (+ (Z i (dec j) S) ;;j unpaired
+           (* (e i j S) (Z (inc i) (dec j) S)) ;;i,j pair
+           (reduce (fn [x k]  ;;k,j paired for an intermediate a<k<b
+                     (+ x (* (e k j S) (Z i (dec k) S) (Z (inc k) (dec j) S))))
+                   0 (range (inc i) (- j u)))))))
+
+
+(defn rand-gauss [mu sigma]
+  (let [r (fn [] (- (rand 2) 1))
+        norm (fn [] (loop [x (r)
+                          y (r)]
+                     (let [s (+ (* x x) (* y y))]
+                       (if (>= s 1)
+                         (recur (r)
+                                (r))
+                         (* x (Math/sqrt (/ (* -2 (log s)) s)))))))]
+    (+ mu (* sigma (norm)))))
+
+
+
+(let [mc {:states ["healthy" "sick"]
+          :observation ["normal" "cold" "dizzy"]
+          :start_probability {"healthy" 0.6 "sick" 0.4}
+          :transition_probability {"healthy" {"healthy" 0.7 "sick" 0.3}
+                                   "sick" {"healthy" 0.4 "sick" 0.6}}
+          :emission_probability {"healthy" {"normal" 0.5 "cold" 0.4 "dizzy" 0.1}
+                                 "sick" {"normal" 0.1 "cold" 0.3 "dizzy" 0.6}}}
+      start-state (->> (get mc :start_probability) markov-step)
+      next-state (fn [cur-state]
+                   (let [trans (get-in mc [:transition_probability cur-state])]
+                     (markov-step trans)))]
+  (loop [i (range 10)
+         state start-state]
+    (if (seq i)
+      (do (prn state)
+          (recur (rest i)
+                 (next-state state)))
+      )))
+
+
+(defn map-value-lookup [m]
+  (into {} (sort-by key
+                    (reduce (fn [m [v k]]
+                              (assoc m v k)) 
+                            {} (map (fn [v k]
+                                      [v k])
+                                    (reductions + (vals m)) (keys m))))))
+
+(defn markov-step [m]
+  (let [r (rand)]
+    (loop [x (map-value-lookup m)]
+      (let [ff (ffirst x)]
+        (if (> ff r)
+          (get x ff)
+          (do (recur (dissoc x ff))))))))
+
+
+(defn pearsonsCC
+  "Finds the pearson correlation coefficient between 2 cols. If either
+   sdev is 0 then the correlation is returned as 0"
+
+  [x y]
+  (let [;;x [18 25 57 45 26 64 37 40 24 33]
+        ;;y [15000 29000 68000 52000 32000 80000 41000 45000 26000 33000]
+        cov (fn [x y] (- (stats/mean (map * x y))
+                        (* (stats/mean x)
+                           (stats/mean y))))
+        sd (fn [x] (Math/sqrt (- (stats/mean (map #(* % %) x)) 
+                                (* (stats/mean x) 
+                                   (stats/mean x)))))]
+    (if (or (= 0 (sd x))
+            (= 0 (sd y)))
+      0
+      (/ (cov x y) (sd x) (sd y)))))
+
+
+(defn suboptimals
+  "Find suboptimal structures using a RNAmutants."
+  
+  [s n]
+  (let [;;s "AACGAUCCCGGG"
+        ;;n 10
+        s (.toUpperCase s)
+        RNAmutants 0 #_((shell/sh "./RNAmutants"
+                              "-l" "./lib/"
+                              "--mutation" "1"
+                              "-n" (str n)
+                              "--input-string" s
+                              :dir "/home/kitia/Desktop/RNAmutants/")
+                    :out)
+        RNAsubopt ((shell/sh "RNAsubopt"
+                             "-p" (str n)
+                             :in s)
+                   :out)
+        out (->> RNAsubopt str/split-lines)
+        structures (->> (if (some #(re-find #"\w+" %) out)
+                          (drop-until #(re-find #"\> sampling \d+" out))
+                          out)
+                        (remove #(re-find #"[^\(\)\.]" %))
+                        )
+        struct->matrix (fn [st] (reduce (fn [m kv]
+                                         (assoc m kv 1))
+                                       {} (make_pair_table st)))
+        Z->centroid (fn [matrix]
+                      (sort-by key
+                               (reduce (fn [m [[i j] p]]
+                                         (assoc m i "(" j ")"))
+                                       (into {}
+                                             (map #(vector %1 %2) (range (count s)) (repeat ".")))
+                                       (filter (fn [[[i j] p]]
+                                                 (and (< i j)
+                                                      (>= p 0.5)))
+                                               matrix))))
+        struct->vector (fn [st] (map #(if (= \. %) 0 1) (seq st)))
+        partition-function (reduce  (fn [m [k v]]
+                                      (assoc m k (/ v n)))
+                                    {}  (apply merge-with + (map struct->matrix structures)))]
+    ;;(doseq [i structures] (prn i))
+    ;;(prn (apply str (vals (Z->centroid partition-function))))
+    (struct->vector (apply str (vals (Z->centroid partition-function))))
+    ))
+
+
+;;calculate 1-mutant neighbors for a given seq. the seq ensemble is
+;;found sampling 10000 subopt seqs.
+(time (def foo
+        (doall
+         (pxmap
+          (fn [i] (doall (map #(suboptimals % 10000) i)))
+          2
+          (map #(mutant-neighbor %)
+               (vector "UCUAAAAGAACUGACCGAAGACAGUAGGGGACGAAAGUCAUAAACUUCCUACCgAGGACaAAUAUCAAAAUGAUA"
+                       "UCUACCUAUGGGGAGACCCCGAAGUAAGAGAAUAUAAAAAAACCCCUACCUCAAAGAAAAAAUCCUAAGAUCCCA"
+                       "UCCGGAAUAUCCUGUCCGAGAUUGUGGGUGAUACuGUUUgaGUAUCUUAAuCAAAAAaaCCUGCAUgAGACUGGGGUAAGAACUGUAG"
+                       "UGUAGUAAAAACUCCUUAAAAACCACUGUUAAAAAAGGUCUCGUGACUCCUAGUAUGGUGGCGUAGGAAACAAGGAAUGUGGGUGGCC"
+                       "GUGAAUGAAAGUUUCCGUAGACAGUAGGUGCUGAAAGGCAUAAcguAGAACAaCCUACCgAGGGCAAUUAUAGUGUAUA"))))))
+
+;;find the average pSDC of the various wt compared to the 1-mutant
+;;neighbor ensembles
+(let [wts (map #(suboptimals % 10000) (vector "UCUAAAAGAACUGACCGAAGACAGUAGGGGACGAAAGUCAUAAACUUCCUACCgAGGACaAAUAUCAAAAUGAUA"
+                                       "UCUACCUAUGGGGAGACCCCGAAGUAAGAGAAUAUAAAAAAACCCCUACCUCAAAGAAAAAAUCCUAAGAUCCCA"
+                                       "UCCGGAAUAUCCUGUCCGAGAUUGUGGGUGAUACuGUUUgaGUAUCUUAAuCAAAAAaaCCUGCAUgAGACUGGGGUAAGAACUGUAG"
+                                       "UGUAGUAAAAACUCCUUAAAAACCACUGUUAAAAAAGGUCUCGUGACUCCUAGUAUGGUGGCGUAGGAAACAAGGAAUGUGGGUGGCC"
+                                       "GUGAAUGAAAGUUUCCGUAGACAGUAGGUGCUGAAAGGCAUAAcguAGAACAaCCUACCgAGGGCAAUUAUAGUGUAUA"))]
+                                       (map (fn [wt muts]
+                                                (stats/mean (map #(* (Math/sqrt (count wt)) 
+                                                                   (- 1 (pearsonsCC wt %))) muts)))
+                                            wts foo))
+
+
+(time (def bar
+        (future
+          (doall
+           (pxmap
+            (fn [i] (doall (map #(suboptimals % 10000) i)))
+            2
+            (map mutant-neighbor
+                 (map second (take 1 (take-nth 2 (partition-all 2 (io/read-lines "/home/kitia/bin/gaisr/trainset2/test.fa")))))))))))
