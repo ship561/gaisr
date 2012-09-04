@@ -510,8 +510,8 @@
   (let [efile (fs/fullpath efile)
         filespec (fs/fullpath (fs/replace-type efile ".fna"))]
     (if loc
-      (entry-file->fasta-file-ranges efile filespec blastdb)
-      (entry-file->fasta-file-full efile filespec blastdb))
+      (ncbi-entry-file->fasta-file-ranges efile filespec blastdb)
+      (ncbi-entry-file->fasta-file-full efile filespec blastdb))
     filespec))
 
 
