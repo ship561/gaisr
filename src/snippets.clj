@@ -9,7 +9,7 @@
         edu.bc.bio.sequtils.files
         edu.bc.utils
         edu.bc.utils.probs-stats
-        smith_waterman
+        ;smith_waterman
         [clojure.contrib.pprint
          :only (cl-format compile-format)]))
 
@@ -437,21 +437,35 @@
      (neutrality_rand target 100))
   
   ([target n]
-  (let [cand (flatten (take n (remove #(some nil? %) (repeatedly #(map (fn [[s ensemble]]
-                    (when-not (re-find #"d=" s) (re-find #"\w+" s)))
-                  (partition-all 2 (str/split-lines ((shell/sh "RNAinverse" "-Fmp" "-P" "/home/kitia/Desktop/ViennaRNA-2.0.1/rna_andronescu2007.par" :in target) :out))))))))]
-    #_(prn (distinct? cand))
-    ;;(filter #(= target (fold %)) cand)
-    (map #(stats/mean (neutrality %)) cand))))
+     (let [cand (loop [c 0
+                       cand []]
+                  (if (< c n)
+                    (let [x (remove nil?
+                                    (flatten 
+                                     (map (fn [[s ensemble]]
+                                            (when-not (re-find #"d=" s) (re-find #"\w+" s)))
+                                          (partition-all 2 (str/split-lines ((shell/sh "RNAinverse" "-Fmp" (str "-R" (- n c)) "-P" "/usr/local/ViennaRNA-2.0.0/rna_andronescu2007.par" :in target) :out))))))]
+                      (recur (count (distinct cand)) (concat (distinct cand) x)))
+                    (distinct cand)))]
+      
+       #_(prn distinct? cand)
+       ;;(filter #(= target (fold %)) cand)
+       (map #(stats/mean (neutrality %)) cand))))
 
 
 ;;est sequences to test neutrality calc. stored in a file for reading
 ;;from later
 (let [seqs (partition-all 2 (io/read-lines "/home/kitia/bin/gaisr/trainset2/test.fa"))]
   (io/with-out-writer "/home/kitia/bin/gaisr/trainset2/neutrality.clj"
-    (prn (vec
-          (for [[nm s] (take 2 seqs)]
-            (let [n (stats/mean (neutrality s))]
-            [nm n (count (filter #(< n %)(neutrality_rand (fold s))))]))))))
+    (prn
+     (vec (apply concat
+                 (for [iseq (take 1 (partition-all 10 seqs))]
+                   (vec
+                    (pmap (fn [[name s] ]
+                            (let [s (.toUpperCase s)
+                                  nm (stats/mean (neutrality s))
+                                  nc (neutrality_rand (fold s))]
+                              [name nm (count (filter #(< nm %) nc)) nc]))
+                          iseq))))))))
 
 
