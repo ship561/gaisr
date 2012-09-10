@@ -239,7 +239,7 @@
        (map f coll)
        (apply concat
               (doall (pmap (fn[subset] (doall (map f subset)))
-                           (partition-all par coll))))))
+                           (partition-all (/ (count coll) par) coll))))))
   ([f par coll1 coll2]
      (if (= par 1)
        (map f coll1 coll2)

@@ -414,6 +414,28 @@
                          (str/split #" ")
                          first))
 
+(defn inverse-fold
+  "Given a target structure, it will use RNAinverse to find n sequences which fold into an identical structure"
+  
+  [target n]
+  (loop [c 0
+         cand []]
+    (if (< c n)
+      (let [x (remove nil?
+                      (flatten 
+                       (map (fn [[s ensemble]]
+                              (when-not (re-find #"d=" s) (re-find #"\w+" s)))
+                            (partition-all 2
+                                           (str/split-lines
+                                            ((shell/sh "RNAinverse"
+                                                       "-Fmp" (str "-R" (- n c))
+                                                       "-P" "/usr/local/ViennaRNA-2.0.0/rna_andronescu2007.par"
+                                                       :in target)
+                                             :out))))))]
+        (recur (count (distinct cand))
+               (concat (distinct cand) x)))
+      (take n (distinct cand)))))
+
 (defn mutant-neighbor
   "Takes a string s and finds the 3L 1-mer mutants. String can only contain
    letters A, C, G, U."
@@ -448,17 +470,7 @@
      (neutrality_rand target 100))
   
   ([target n]
-     (let [cand (loop [c 0
-                       cand []]
-                  (if (< c n)
-                    (let [x (remove nil?
-                                    (flatten 
-                                     (map (fn [[s ensemble]]
-                                            (when-not (re-find #"d=" s) (re-find #"\w+" s)))
-                                          (partition-all 2 (str/split-lines ((shell/sh "RNAinverse" "-Fmp" (str "-R" (- n c)) "-P" "/usr/local/ViennaRNA-2.0.0/rna_andronescu2007.par" :in target) :out))))))]
-                      (recur (count (distinct cand)) (concat (distinct cand) x)))
-                    (distinct cand)))]
-      
+     (let [cand (inverse-fold target n)]
        #_(prn distinct? cand)
        ;;(filter #(= target (fold %)) cand)
        (map #(stats/mean (neutrality %)) cand))))
@@ -574,7 +586,10 @@
 
 
 (defn suboptimals
-  "Find suboptimal structures using a RNAmutants."
+  "Finds the centroid structure of suboptimal structures and a vector
+   representation using 0's and 1's using a RNAmutants or RNAsubopt. s
+   is the RNA sequence and n is the number of suboptimal structures to
+   consider."
   
   [s n]
   (let [;;s "AACGAUCCCGGG"
@@ -613,45 +628,97 @@
         struct->vector (fn [st] (map #(if (= \. %) 0 1) (seq st)))
         partition-function (reduce  (fn [m [k v]]
                                       (assoc m k (/ v n)))
-                                    {}  (apply merge-with + (map struct->matrix structures)))]
+                                    {}  (apply merge-with + (map struct->matrix structures)))
+        centroid (apply str (vals (Z->centroid partition-function)))]
     ;;(doseq [i structures] (prn i))
     ;;(prn (apply str (vals (Z->centroid partition-function))))
-    (struct->vector (apply str (vals (Z->centroid partition-function))))
+    [centroid (struct->vector centroid)]
     ))
 
 
-;;calculate 1-mutant neighbors for a given seq. the seq ensemble is
-;;found sampling 10000 subopt seqs.
-(time (def foo
-        (doall
-         (pxmap
-          (fn [i] (doall (map #(suboptimals % 10000) i)))
-          2
-          (map #(mutant-neighbor %)
-               (vector "UCUAAAAGAACUGACCGAAGACAGUAGGGGACGAAAGUCAUAAACUUCCUACCgAGGACaAAUAUCAAAAUGAUA"
-                       "UCUACCUAUGGGGAGACCCCGAAGUAAGAGAAUAUAAAAAAACCCCUACCUCAAAGAAAAAAUCCUAAGAUCCCA"
-                       "UCCGGAAUAUCCUGUCCGAGAUUGUGGGUGAUACuGUUUgaGUAUCUUAAuCAAAAAaaCCUGCAUgAGACUGGGGUAAGAACUGUAG"
-                       "UGUAGUAAAAACUCCUUAAAAACCACUGUUAAAAAAGGUCUCGUGACUCCUAGUAUGGUGGCGUAGGAAACAAGGAAUGUGGGUGGCC"
-                       "GUGAAUGAAAGUUUCCGUAGACAGUAGGUGCUGAAAGGCAUAAcguAGAACAaCCUACCgAGGGCAAUUAUAGUGUAUA"))))))
-
-;;find the average pSDC of the various wt compared to the 1-mutant
-;;neighbor ensembles
-(let [wts (map #(suboptimals % 10000) (vector "UCUAAAAGAACUGACCGAAGACAGUAGGGGACGAAAGUCAUAAACUUCCUACCgAGGACaAAUAUCAAAAUGAUA"
-                                       "UCUACCUAUGGGGAGACCCCGAAGUAAGAGAAUAUAAAAAAACCCCUACCUCAAAGAAAAAAUCCUAAGAUCCCA"
-                                       "UCCGGAAUAUCCUGUCCGAGAUUGUGGGUGAUACuGUUUgaGUAUCUUAAuCAAAAAaaCCUGCAUgAGACUGGGGUAAGAACUGUAG"
-                                       "UGUAGUAAAAACUCCUUAAAAACCACUGUUAAAAAAGGUCUCGUGACUCCUAGUAUGGUGGCGUAGGAAACAAGGAAUGUGGGUGGCC"
-                                       "GUGAAUGAAAGUUUCCGUAGACAGUAGGUGCUGAAAGGCAUAAcguAGAACAaCCUACCgAGGGCAAUUAUAGUGUAUA"))]
-                                       (map (fn [wt muts]
-                                                (stats/mean (map #(* (Math/sqrt (count wt)) 
-                                                                   (- 1 (pearsonsCC wt %))) muts)))
-                                            wts foo))
-
-
-(time (def bar
-        (future
-          (doall
+(def foo ;;takes ~2-2.5hrs to finish at 50 seqs 10 cpus
+        (future (doall
            (pxmap
-            (fn [i] (doall (map #(suboptimals % 10000) i)))
-            2
+            (fn [i] (doall (map #(second (suboptimals % 10000)) i)))
+            10
             (map mutant-neighbor
-                 (map second (take 1 (take-nth 2 (partition-all 2 (io/read-lines "/home/kitia/bin/gaisr/trainset2/test.fa")))))))))))
+                 (map second (take 50 (take-nth 2 (partition-all 2 (io/read-lines "/home/peis/bin/gaisr/trainset2/test.fa"))))))))))
+
+(let [wts (map second (take-nth 2 (partition-all 2 (io/read-lines "/home/peis/bin/gaisr/trainset2/test.fa"))))]
+  (map (fn [wt mut]
+         (map #(* (Math/sqrt (count wt))
+                  (- 1 (pearsonsCC wt %))) mut))
+       (map #(second (suboptimals % 10000)) wts) @foo))
+
+
+;;generate 100 dinucleotide shuffles of the given sequence (from L10)
+;;and then find the pSDC for each of these wt and shuffled versions
+(def bar
+  (future
+    (doall
+     (let [s (.toUpperCase "UCUAAAAGAACUGACCGAAGACAGUAGGGGACGAAAGUCAUAAACUUCCUACCgAGGACaAAUAUCAAAAUGAUA")
+           [stc stv] (suboptimals s 10000)
+           wts  (inverse-fold st 5)
+           muts (pxmap
+                 (fn [i] (map #(second (suboptimals % 10000)) i))
+                 10
+                 (map #(mutant-neighbor %) (cons s wts)))]
+       (map (fn [wt mut]
+              (map #(* (Math/sqrt (count wt))
+                       (- 1 (pearsonsCC wt %))) mut))
+            (cons stv (map #(second (suboptimals % 10000)) wts)) muts)))))
+
+(def bar
+  (future
+    (doall
+     (let [generate-vectors (fn [s]
+                              (let [s (.toUpperCase s)
+                                    [stc stv] (suboptimals s 10000)
+                                    wts  (inverse-fold stc 5)
+                                    muts (pxmap
+                                          (fn [i] (doall (map #(second (suboptimals % 10000)) i)))
+                                          10
+                                          (map #(mutant-neighbor %) (cons s wts)))] 
+                                [(cons stv (map #(second (suboptimals % 10000)) wts)) muts]))
+           inseqs (let [fdir "/home/peis/bin/gaisr/trainset2/"
+                        fvector ["RF00555-seed.4.fasta" "RF00558-seed.3.fasta"
+                                 "RF00559-seed.7.fasta"]
+                        randseq (fn [coll] (first (last (repeatedly 100 #(shuffle coll)))))]
+                    (conj (map (fn [f]
+                                 (->> (io/read-lines (str fdir f))
+                                      rest
+                                      (take-nth 2)
+                                      randseq))
+                               fvector) 
+                          "UCCGGAAUAUCCUGUCCGAGAUUGUGGGUGAUACuGUUUgaGUAUCUUAAuCAAAAAaaCCUGCAUgAGACUGGGGUAAGAACUGUAG"))
+           ]
+       (map generate-vectors (take 1 inseqs))))))
+
+
+
+
+
+;;load up database stuff for usage (use '[edu.bc.bio.gaisr.db-actions :only [sql-query mysql-ds]])
+;; (sql-query
+;;            "select be.name,an.ancestors
+;;           from bioentry as be, taxon as tx, ancestor as an
+;;           where be.taxon_id=tx.taxon_id
+;;           and   tx.ncbi_taxon_id=an.ncbi_taxon_id
+;;           and   be.name = \"NC_009654\"")
+
+
+;;make graphs 
+(let [abc (map #(map (fn [x] (stats/mean x)) (partition-all 3 %)) barr)
+      wt (first abc)
+      n (count wt)
+      xy (charts/xy-plot (range 1 (inc n)) wt 
+                         :y-label "pSDC"
+                         :x-label "position"
+                         :title "seq3 collapsed mutations" 
+                         :legend true 
+                         :series-label "wt"
+                         :points true)]
+  (view xy) 
+  (map (fn [i y]
+         (charts/add-lines xy (range 1 (inc n)) y :series-label (str "neg" i)))
+       (iterate inc 1) (rest abc)))
