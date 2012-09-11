@@ -674,7 +674,7 @@
      (let [generate-vectors (fn [s]
                               (let [s (.toUpperCase s)
                                     [stc stv] (suboptimals s 10000)
-                                    wts  (inverse-fold stc 5)
+                                    wts  (inverse-fold stc 10)
                                     muts (pxmap
                                           (fn [i] (doall (map #(second (suboptimals % 10000)) i)))
                                           10
@@ -692,7 +692,7 @@
                                fvector) 
                           "UCCGGAAUAUCCUGUCCGAGAUUGUGGGUGAUACuGUUUgaGUAUCUUAAuCAAAAAaaCCUGCAUgAGACUGGGGUAAGAACUGUAG"))
            ]
-       (map generate-vectors (take 1 inseqs))))))
+       (map generate-vectors inseqs)))))
 
 
 
@@ -722,3 +722,57 @@
   (map (fn [i y]
          (charts/add-lines xy (range 1 (inc n)) y :series-label (str "neg" i)))
        (iterate inc 1) (rest abc)))
+
+
+;;create charts using highcharts
+(defn makechart
+  "creates a JSON datastructure for a chart from a map. The JSON
+   output file in .js format can then be used to create a highcharts
+   chart
+
+   f is typically \"gaisr/robustness/highchart-test.js\""
+  
+  [f dataset]
+  (let [;;abc (map #(map (fn [x] (stats/mean x)) (partition-all 3 %))
+   ;;barr)
+        abc (map #(map (fn [x] (stats/mean x)) (partition-all 3 %)) dataset)
+        wt (first abc)
+        n (count wt)
+        xy {:chart {
+                    :renderTo "container",
+                    :type "line",
+                    :marginRight 130,
+                    :marginBottom 50
+                    :height 500}
+            :title {:text "seq collapsed mutations",
+                    :x -20
+                    }
+            :subtitle {:text "L13, RF00555" 
+                       :x -20}
+            :xAxis {:title {:text "position"} 
+                    :categories (vec (range 1 (inc n)))}
+            :yAxis {:title {:text "pSDC"} 
+                    :min 0 :maxPadding 0.001
+                    :plotLines [{:value 0
+                                 :width 1
+                                 :color "#0808080"}]}
+            :legend {:layout "vertical"
+                     :align "right"
+                     :verticalAlign "top"
+                     :x -10
+                     :y 100
+                     :borderWidth 0}
+            :series (vec
+                     (conj
+                      (map (fn [i y]
+                             {:name (str "neg" i)
+                              :data (vec y)
+                              :visible true})
+                           (iterate inc 1) (rest abc))
+                      {:name "wt"
+                       :data (vec wt)}
+                      ))}
+        ]
+    (io/with-out-writer f 
+      (print "var foo=")
+      (prn (json/json-str xy)))))
