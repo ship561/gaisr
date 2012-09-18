@@ -431,20 +431,26 @@
                           iseq))))))))
 
 (defn Z
-  "Calculates the partition function for a structure s from i to
-  j. Currently assume homopolymer (any base can bind an y other
-  base). Energy function = 1 to count structures but needs to be
-  changed to actual energies. "
+  "Calculates the partition function for a structure (from sequences
+  S) from i (starts at 0) to j. Currently assume homopolymer (any base
+  can bind an y other base). Energy function = 1 to count structures
+  but needs to be changed to actual energies.
+
+  The probability of a base pair i,j occuring is given by:
+  Pr(i,j) = (* Z(1,i-1) E(s1 s2) Z(i+1,j-1) Z(j+1,n))/Z(1,n)"
 
   [i j S]
-  (let [n (- j i -1)
+  (let [S (.toUpperCase S)
+        n (- j i -1)
         bp? (fn [b1 b2] ;;b1=base1 b2=base2
               (let [bp #{"AU" "UA" "GC"  "CG" "GU" "UG"}]
                 (contains? bp (str b1 b2))))
-        E (fn [b1 b2] (if (bp? b1 b2) -1 0)) ;;Energy of basepair, E(basepair)
-        e (fn [i j S] 1#_(let [s1 (subs S i (inc i))
-                           s2 (subs S j (inc j))]
-                       (Math/exp (/ (E s1 s2) -2 310))))
+        e (fn [i j S] (let [s1 (subs S i (inc i))
+                           s2 (subs S j (inc j))
+                           R 2
+                           T 310
+                           E (fn [b1 b2] (if (bp? b1 b2) 1 0))] ;;Energy of basepair, E(basepair)
+                       (E s1 s2) #_(Math/exp (/ (E s1 s2) R T -1))))
         u 0 ;;min loop size
         ]
     (if (<= (- j i) u) 1
@@ -537,7 +543,7 @@
      (let [generate-vectors (fn [s]
                               (let [s (.toUpperCase s)
                                     [stc stv] (suboptimals s 10000)
-                                    wts  (inverse-fold stc 10)
+                                    wts  (inverse-fold stc 100)
                                     muts (pxmap
                                           (fn [i] (doall (map #(second (suboptimals % 10000)) i)))
                                           10
@@ -545,17 +551,20 @@
                                 [(cons stv (map #(second (suboptimals % 10000)) wts)) muts]))
            inseqs (let [fdir "/home/peis/bin/gaisr/trainset2/"
                         fvector ["RF00555-seed.4.fasta" "RF00558-seed.3.fasta"
-                                 "RF00559-seed.7.fasta"]
+                                 "RF00559-seed.7.fasta" "RF00167-seed.9.fasta"]
                         randseq (fn [coll] (first (last (repeatedly 100 #(shuffle coll)))))]
                     (conj (map (fn [f]
                                  (->> (io/read-lines (str fdir f))
                                       rest
                                       (take-nth 2)
-                                      randseq))
+                                      ))
                                fvector) 
-                          "UCCGGAAUAUCCUGUCCGAGAUUGUGGGUGAUACuGUUUgaGUAUCUUAAuCAAAAAaaCCUGCAUgAGACUGGGGUAAGAACUGUAG"))
+                          '("UCCGGAAUAUCCUGUCCGAGAUUGUGGGUGAUACuGUUUgaGUAUCUUAAuCAAAAAaaCCUGCAUgAGACUGGGGUAAGAACUGUAG" "UCUAAAAGAACUGACCGAAGACAGUAGGGGACGAAAGUCAUAAACUUCCUACCgAGGACaAAUAUCAAAAUGAUA")))
            ]
-       (map generate-vectors inseqs)))))
+       (map (fn [k vs]
+              (assoc {} k (for [i (map generate-vectors vs)]
+                            (map psdc i))))
+            [:L10 :L13 :L20 :L21 :FMN] inseqs)))))
 
 
 
@@ -588,54 +597,4 @@
 
 
 ;;create charts using highcharts
-(defn makechart
-  "creates a JSON datastructure for a chart from a map. The JSON
-   output file in .js format can then be used to create a highcharts
-   chart
 
-   f is typically \"gaisr/robustness/highchart-test.js\""
-  
-  [f dataset]
-  (let [;;abc (map #(map (fn [x] (stats/mean x)) (partition-all 3 %))
-   ;;barr)
-        abc (map #(map (fn [x] (stats/mean x)) (partition-all 3 %)) dataset)
-        wt (first abc)
-        n (count wt)
-        xy {:chart {
-                    :renderTo "container",
-                    :type "line",
-                    :marginRight 130,
-                    :marginBottom 50
-                    :height 500}
-            :title {:text "seq collapsed mutations",
-                    :x -20
-                    }
-            :subtitle {:text "L13, RF00555" 
-                       :x -20}
-            :xAxis {:title {:text "position"} 
-                    :categories (vec (range 1 (inc n)))}
-            :yAxis {:title {:text "pSDC"} 
-                    :min 0 :maxPadding 0.001
-                    :plotLines [{:value 0
-                                 :width 1
-                                 :color "#0808080"}]}
-            :legend {:layout "vertical"
-                     :align "right"
-                     :verticalAlign "top"
-                     :x -10
-                     :y 100
-                     :borderWidth 0}
-            :series (vec
-                     (conj
-                      (map (fn [i y]
-                             {:name (str "neg" i)
-                              :data (vec y)
-                              :visible true})
-                           (iterate inc 1) (rest abc))
-                      {:name "wt"
-                       :data (vec wt)}
-                      ))}
-        ]
-    (io/with-out-writer f 
-      (print "var foo=")
-      (prn (json/json-str xy)))))

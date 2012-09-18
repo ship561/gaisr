@@ -1,8 +1,10 @@
 (ns robustness
  (:require [clojure.contrib.string :as str]
-            [clojure.java.shell :as shell]
-            [incanter.stats :as stats]
-            [incanter.charts :as charts])
+           [clojure.java.shell :as shell]
+           [clojure.contrib.io :as io]
+           [incanter.stats :as stats]
+           [incanter.charts :as charts]
+           )
   (:use edu.bc.bio.seq-utils
         edu.bc.bio.sequtils.files
         edu.bc.utils
@@ -55,7 +57,7 @@
                               (when-not (re-find #"d=" s) (re-find #"\w+" s)))
                             (->> ((shell/sh "RNAinverse"
                                             "-Fmp"
-                                            (str "-R" (- n c))
+                                            (str "-R" n)
                                             "-P" "/usr/local/ViennaRNA-2.0.0/rna_andronescu2007.par"
                                             :in target)
                                   :out)
@@ -67,8 +69,8 @@
       (take n (distinct cand)))))
 
 (defn neutrality
-  "takes a string s and  returns neutrality of each of the seq compared
-   to each of the 3L 1 neighbors mutants"
+  "takes a string s and  returns neutrality of the seq  when compared
+   to each of the 3L 1-mutant neighbors"
 
   [s]
   (let [st (fold s)
@@ -143,6 +145,111 @@
     [centroid (struct->vector centroid)]
     ))
 
+(defn psdc [dataset]
+  (map (fn [wt mut]
+         (map #(* (Math/sqrt (count wt))
+                  (- 1 (pearsonsCC wt %))) mut))
+       (first dataset) (second dataset)))
+
+(defn generate-vectors
+  "Generates suboptimal structures to find the centroid
+   structure (structure and vector representation) of sequence s. n
+   inverse folded sequences will be generated based on the centroid
+   structure. Then the centroid structure for all 3L 1-mutant
+   neighbors will be found for s and its n inverse folded sequences.
+   Returns the structure of s then the mutuant in vector form."
+
+  [s n]
+  (let [s (.toUpperCase s)
+        [stc stv] (suboptimals s 10000)
+        wts  (inverse-fold stc n)
+        muts (pxmap
+              (fn [i] (doall (map #(second (suboptimals % 10000)) i)))
+              10
+              (map #(mutant-neighbor %) (cons s wts)))] 
+    [(cons stv (map #(second (suboptimals % 10000)) wts)) muts]))
 
 
+(defn makechart
+  "creates a JSON datastructure for a chart from a map. The JSON
+   output file in .js format can then be used to create a highcharts
+   chart
 
+   f is typically \"gaisr/robustness/highchart-test.js\""
+  
+  [f dataset title subtitle]
+  (let [;;abc (map #(map (fn [x] (stats/mean x)) (partition-all 3 %))
+   ;;barr)
+        abc (map #(map (fn [x] (stats/mean x)) (partition-all 3 %)) dataset)
+        wt (first abc)
+        n (count wt)
+        xy {:chart {
+                    :renderTo "container",
+                    :type "line",
+                    :marginRight 130,
+                    :marginBottom 50
+                    :height 500}
+            :title {:text title,
+                    :x -20
+                    }
+            :subtitle {:text subtitle 
+                       :x -20}
+            :xAxis {:title {:text "position"} 
+                    :categories (vec (range 1 (inc n)))}
+            :yAxis {:title {:text "pSDC"} 
+                    :min 0 :maxPadding 0.001
+                    :plotLines [{:value 0
+                                 :width 1
+                                 :color "#0808080"}]}
+            :legend {:layout "vertical"
+                     :align "right"
+                     :verticalAlign "top"
+                     :x -10
+                     :y 100
+                     :borderWidth 0}
+            :series (vec
+                     (conj
+                      (map (fn [i y]
+                             {:name (str "neg" i)
+                              :data (vec y)
+                              :visible true})
+                           (iterate inc 1) (rest abc))
+                      {:name "wt"
+                       :data (vec wt)}
+                      ))}
+        ]
+    (clojure.contrib.io/with-out-writer f 
+      (print "var foo=")
+      (prn (clojure.contrib.json/json-str xy)))))
+
+
+(defn combinedset []
+  (let [avgpt (fn [dataset] (map #(map (fn [x] (stats/mean x)) (partition-all 3 %)) dataset))
+        makemap (fn [names data] 
+                  (into {}
+                        (map (fn [nm x] 
+                               [nm {:wt (first x) :con (rest x)}])
+                             names data)))
+        exp1 (map avgpt 
+                  (map psdc 
+                       (read-string (slurp "/home/peis/bin/gaisr/robustness/inverse-struct-con.clj"))))
+        exp1 (makemap [:L10seq2 :L13 :L20 :L21] exp1)
+        exp2 (map avgpt
+                  (map psdc 
+                       (read-string (slurp "/home/peis/bin/gaisr/robustness/inverse-struct-con2.clj"))))
+        exp2 (makemap [:L10seq1 :L10seq2 :L13 :L20 :L21] exp2)                             
+        exp3 (map avgpt (read-string (slurp "/home/peis/bin/gaisr/robustness/inverse-struct-con3.clj")))
+        exp3 (makemap [:L10seq1 :L10seq2 :L13 :L20 :L21 :FMN] exp3)
+        comboexp (merge-with (fn [a b]
+                               (let [{curwt :wt curcon :con} a
+                                     {newwt :wt newcon :con} b]
+                                 (assoc {} :wt (map + curwt newwt) :con (concat curcon newcon))))
+                             exp1 exp2 exp3)]
+    (reduce (fn [m [k {wt :wt con :con}]]
+              (let [n {:L10seq1 2 :L10seq2 3 :L13 3 :L20 3 :L21 3 :FMN 1}
+                    w (map (fn [x] (/ x (n k))) wt)
+                    c (map stats/mean con)]
+                (assoc m k 
+                       (assoc {} :wt w :wtavg (stats/mean w) :conavg c
+                              :con con))))
+            {} comboexp)))
