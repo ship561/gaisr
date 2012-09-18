@@ -37,7 +37,6 @@
   (:require [clojure.contrib.math :as math]
             [clojure.contrib.combinatorics :as comb]
             [clojure.contrib.string :as str]
-            [clojure.contrib.str-utils :as stru]
             [clojure.set :as set]
             [clojure.contrib.seq :as seq]
             [clojure.zip :as zip]
@@ -81,7 +80,10 @@
 
 
 (defn freqn
-  "Frequencies of n-grams in collection COLL treated as a sequence
+  "Frequencies of n-grams (aka l-mers \"features\", et. al.) in
+   collection COLL treated as a sequence.  n is the \"window\" or
+   resolution width.  Slide is always fixed at 1 (one) position.
+
    Ex: (freqn 2 \"acagtcaacctggagcctggt\")
    =>
    {\"aa\" 1, \"cc\" 2, \"gg\" 2, \"ac\" 2, \"ag\" 2, \"gt\" 2,
@@ -92,7 +94,7 @@
     (frequencies (seq coll))
     (loop [s (seq coll)
            res (transient {})]
-      (let [k (str/join "" (take n s))]
+      (let [k (apply str (take n s))]
         (if (>= (count s) n)
           (recur (rest s)
                  (assoc! res k (inc (get res k 0))))
@@ -107,7 +109,7 @@
   "
   [n coll freq-fn]
   (let [freqs (freq-fn n coll)
-        sz (sum (vals freqs))
+        sz (double (sum (vals freqs)))
         probs (reduce (fn[m [k v]]
                         (assoc m k (double (/ v sz))))
                       {} freqs)]
@@ -119,8 +121,8 @@
   (freqs&probs n coll freqn))
 
 (defn probs
-  "Probabilities for items from coll takne n at a time or as
-   determined by the frequency dist map freq-dist-map."
+  "Probabilities for items from coll taken n at a time (see freqn) or
+   as determined by the frequency dist map freq-dist-map."
   ([n coll]
      (second (freqs-probs n coll)))
   ([freq-dist-map]
@@ -1231,3 +1233,4 @@
     (doseq [i ngram-points]
       (aset v i 1))
     v))
+

@@ -465,7 +465,7 @@
                   s (if (< s e) s e)
                   e (if (= s e) x e)]
               (assoc m nm (conj (get m nm []) [s e]))))
-          {} (map #(first (str/split #" " %))
+          {} (map #(first (str/split #"\s+" %))
                   (filter #(re-find #"^N(C|S|Z)" %) stofile-lazyseq))))
 
 (defn get-cmfinder-sto-locs [stofile-lazyseq]
@@ -476,7 +476,7 @@
                   s (Integer. s)
                   e (Integer. e)]
               (assoc m nm (conj (get m nm []) [s e]))))
-          {} (map #(second (str/split #" +" %))
+          {} (map #(second (str/split #"\s+" %))
                   (filter #(re-find #"DE" %) stofile-lazyseq))))
 
 (defn get-infernal-sto-locs [stofile-lazyseq]
@@ -490,7 +490,7 @@
                   s (if (< s e) s e)
                   e (if (= s e) x e)]
               (assoc m nm (conj (get m nm []) [s e]))))
-          {} (map #(first (str/split #" " %))
+          {} (map #(first (str/split #"\s+" %))
                (filter #(re-find #"^N(C|S|Z)" %) stofile-lazyseq))))
 
 (defn get-sto-seq-locs [stofile]
@@ -502,7 +502,7 @@
                   (re-find #"ORIGINAL_MOTIF" fmt-line) :generic
                   :else (raise :type :unknown-sto-fmt
                                :args [stofile fmt-line]))
-        rem-file (drop 2 stofile-lazyseq)]
+        rem-file (drop-until #(not (.startsWith % "#")) stofile-lazyseq)]
     (case file-fmt
           :cmfinder (get-cmfinder-sto-locs rem-file)
           :infernal (get-infernal-sto-locs rem-file)
@@ -518,7 +518,7 @@
   (first (re-find #"N(C|S|Z)_[0-9A-Z]+" gi)))
 
 (defn gi-loc [gi]
-  (let [l (first (re-find #":(.)[0-9]+-[0-9]+" gi))]
+  (let [l (first (re-find #":(.|)[0-9]+-[0-9]+" gi))]
     (when l (subs l (first (pos-any "0123456789" l))))))
 
 (defn build-hitseq-map [hitfile]
@@ -658,14 +658,16 @@
                         {} (read-seqs stofile :info :name))
         in-spread? (fn [x y] (<= (abs (- x y)) spread))
         dup? (fn[m [nm abst abend :as k]]
-               (let [[s e :as coord] (m nm)
+               (let [[s e :as coord] (m k)
                      [stost stoend :as sto-coord] (sto-map nm)]
                  (or (and coord
                           (in-spread? s abst)
                           (in-spread? e abend))
                      (and sto-coord
-                          (in-spread? stost abst)
-                          (in-spread? stoend abend)))))]
+                          (let [[abst abend]
+                                (if (< abend abst) [abend abst] [abst abend])]
+                            (in-spread? stost abst)
+                            (in-spread? stoend abend))))))]
 
     (second ; just return filtered seq, not the map used...
      (reduce (fn [[m s] v]
@@ -677,7 +679,7 @@
              [{} []] hit-parts))))
 
 
-(defn cmsearch-out-csv [cmsearch-out & {:keys [spread] :or {spread 10}}]
+(defn cmsearch-out-csv [cmsearch-out & {:keys [spread] :or {spread 50}}]
   (if (fs/empty? cmsearch-out)
     [[] []]
     (let [csv-file (str/replace-re #"\.out$" ".csv" cmsearch-out)
@@ -703,7 +705,7 @@
       [good dups])))
 
 
-(defn gen-cmsearch-csvs [cmsearch-out-dir & {:keys [spread] :or {spread 10}}]
+(defn gen-cmsearch-csvs [cmsearch-out-dir & {:keys [spread] :or {spread 50}}]
   (let [base cmsearch-out-dir]
     (doseq [x (filter #(re-find #"\.cmsearch\.out$" %)
                       (sort (map #(fs/join base %) (fs/listdir base))))]
@@ -886,6 +888,7 @@
     (when (seq chk-info)
       (raise :type :badsto :chk-info chk-info))))
 
+
 (defn do-cmbuild-calibrate [stofiles]
   (doall (mostos->calibrated-cms stofiles)))
 
@@ -893,9 +896,18 @@
   {:pre [(seq stofiles)]}
   (doall (map #(cmbuild %) stofiles)))
 
-(defn do-calibrate [cmfiles]
-  {:pre [(seq cmfiles)]}
-  (doall (cms->calibrated-cms cmfiles)))
+(defn do-calibrate [cms cmdir]
+  {:pre [(seq cms)]}
+  (let [cmfiles (reduce (fn[v cmfspec]
+                          (concat v (fs/re-directory-files cmdir cmfspec)))
+                        [] cms)]
+    (doall (cms->calibrated-cms cmfiles))))
+
+
+(defn get-cmsearch-groups [cmdir cmsearchs]
+  (map (fn[[hf cmfspecs]]
+         [hf (flatten (map #(fs/re-directory-files cmdir %) cmfspecs))])
+       cmsearchs))) ; map of hitf->[regex-cm-filespecs]
 
 (defn do-cmsearch [hfs-cmss eval]
   (doall (map (fn[[hf cms]]
@@ -908,18 +920,13 @@
         stodir (config :stodir)
         cmdir (config :cmdir)
         hitdir (config :hitfile-dir)
-        stos (or (seq (map #(fs/join stodir %) (config :cmbuilds)))
+        stos (or (seq (config :cmbuilds))
                  (seq (fs/directory-files stodir "sto")))
-        cms  (or (seq (map #(fs/join cmdir %) (config :calibrates)))
-                 (seq (fs/directory-files cmdir "cm")))
-        eval (or (config :eval) eval)
-        cmsearchs (config :cmsearchs)
-        hfs-cmss (map (fn[[hf cms]]
-                        [(fs/join hitdir hf)
-                         (map #(fs/join cmdir %) cms)])
-                      cmsearchs)]
+        cms  (or (seq (config :calibrates))
+                 (seq (fs/directory-files cmdir "cm")))]
 
-    (when (config :cmbuild) (chk-stos stos))
+    (when (and (config :check-sto) (config :cmbuild))
+      (chk-stos stos))
 
     (cond
      (and (config :cmbuild) (config :cmcalibrate))
@@ -932,10 +939,13 @@
      ;; (no build), and so cms can't legitimately be nil.  That is a
      ;; precondition check in do-calibrate
      (config :cmcalibrate)
-     (do-calibrate cms))
+     (do-calibrate cms cmdir))
 
     ;; Map over all cmsearch requests
-    (let [cmouts (if (and cmsearchs (seq hfs-cmss))
+    (let [eval (or (config :eval) eval)
+          cmsearchs (config :cmsearchs)
+          hfs-cmss (get-cmsearch-groups cmdir cmsearchs)
+          cmouts (if (and cmsearchs (seq hfs-cmss))
                    (flatten (do-cmsearch hfs-cmss eval))
                    (fs/directory-files cmdir "cmsearch.out"))]
 

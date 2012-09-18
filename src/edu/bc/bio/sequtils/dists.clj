@@ -387,3 +387,325 @@
                                              (assoc m k v) m))
                                          {} (freqn l sq))))])])
                   (read-seqs mg-fa :info :both))]))))
+
+
+(comment
+
+(def l-1 (probs 3 "CAAAAAGAAAUAGUAGGGCUUUUGAAAGUAACGGCCGCCCUGCAAAGAGCGGCCGUUCGCCUUACGUUUUUUA"))
+
+(def l-2 (probs 2 "CAAAAAGAAAUAGUAGGGCUUUUGAAAGUAACGGCCGCCCUGCAAAGAGCGGCCGUUCGCCUUACGUUUUUUA"))
+
+(for [x (keys l-1) a "AGUC"]
+  (str x a))
+
+(reduce (fn[m lmer]
+          (let [l (dec (count lmer))
+                x (subs lmer 1)
+                y (subs lmer 0 l)
+                z (subs lmer 1 l)]
+            (if (and (l-1 x) (l-1 y) (l-2 z))
+              (assoc m lmer (/ (* (l-1 x) (l-1 y)) (l-2 z)))
+              m)))
+        {} *1)
+
+(jensen-shannon
+ *1 (probs 4 "CAAAAAGAAAUAGUAGGGCUUUUGAAAGUAACGGCCGCCCUGCAAAGAGCGGCCGUUCGCCUUACGUUUUUUA"))
+
+)
+
+
+(defn expected-qdict [q-1 q-2 & {:keys [alpha] :or {alpha (alphabet :rna)}}]
+  (reduce (fn[m lmer]
+            (let [l (dec (count lmer))
+                  x (subs lmer 1)
+                  y (subs lmer 0 l)
+                  z (subs lmer 1 l)]
+              (if (and (q-1 x) (q-1 y) (q-2 z))
+                (assoc m lmer (/ (* (q-1 x) (q-1 y)) (q-2 z)))
+                m)))
+          {} (for [x (keys q-1) a alpha] (str x a)))))
+
+
+(defn freq-xdict-dict
+  [q sq]
+  (let [ext-sq (str sq "X")
+        residue-key (subs ext-sq (- (count sq) (- q 1)))
+        q-xfreq-dict (freqn q ext-sq)
+        q-freq-dict (dissoc q-xfreq-dict residue-key)]
+    [q-xfreq-dict q-freq-dict]))
+
+(defn q-1-dict
+  ([q-xdict]
+     (reduce (fn[m [k v]]
+               (let [l (count k)
+                     pre (subs k 0 (dec l))]
+                 (assoc m pre (+ (get m pre 0) v))))
+             {} q-xdict))
+  ([q sq]
+     (probs (dec q) sq)))
+
+(defn q1-xdict-dict
+  [q sq & {:keys [ffn] :or {ffn probs}}]
+  (let [[q-xfreq-dict q-freq-dict] (freq-xdict-dict q sq)
+        q-xpdf-dict (probs q-xfreq-dict)
+        q-pdf-dict (probs q-freq-dict)]
+    {:xfreq q-xfreq-dict :xpdf q-xpdf-dict
+     :freq q-freq-dict :pdf q-pdf-dict}))
+
+
+
+(defn reconstruct-dict
+  [l sq]
+  {:pre [(> l 2)]}
+  (let [q (dec l)
+        qmaps (q1-xdict-dict q sq)
+        [q-xdict q-dict] (map qmaps [:xpdf :pdf])
+        q-1dict (q-1-dict q-xdict)]
+    (expected-qdict q-dict q-1dict)))
+
+
+(defn max-qdict-entropy
+  [q & {:keys [alpha] :or {alpha (alphabet :rna)}}]
+  (let [base (count alpha)]
+    (* q (log2 base))))
+
+(defn informativity
+  ([q sq]
+     (- (max-qdict-entropy q) (entropy (probs q sq))))
+  ([q-dict]
+     (let [q (count (first (keys q-dict)))]
+       (- (max-qdict-entropy q) (entropy q-dict)))))
+
+
+(defn limit-entropy
+  [q|q-dict sq|q-1dict &
+   {:keys [alpha NA] :or {alpha (alphabet :rna) NA -1.0}}]
+  {:pre [(or (and (integer? q|q-dict)
+                  (or (string? sq|q-1dict) (coll? sq|q-1dict)))
+             (and (map? q|q-dict) (map? sq|q-1dict)))]}
+
+  (if (map? q|q-dict)
+    (let [q-dict q|q-dict
+          q-1dict sq|q-1dict]
+      (/ (- (entropy q-dict) (entropy q-1dict))
+         (log2 (count alpha))))
+
+    (let [q q|q-dict
+          sq sq|q-1dict
+          lgcnt (log2 (count alpha))]
+      (if (= q 1)
+        (/ (entropy (probs 1 sq)) lgcnt)
+
+        (let [qmaps (q1-xdict-dict q sq)
+              [q-xdict q-dict] (map qmaps [:xpdf :pdf])
+              q-1dict (q-1-dict q-xdict)]
+          (if (< (count q-dict) (count q-1dict))
+            (if (fn? NA) (NA q-dict q-1dict) NA)
+            (/ (- (entropy q-dict) (entropy q-1dict)) lgcnt)))))))
+
+
+(defn limit-informativity
+  ([q sq]
+     )
+  ([q-dict]
+     ))
+
+
+(defn CREl [l sq & {:keys [limit] :or {limit 15}}]
+  {:pre [(> l 2)]}
+  (sum (fn[k]
+         (catch-all (DX||Y
+                     (probs k sq)
+                     (reconstruct-dict k sq))))
+       (range l (inc limit))))
+
+
+(defn information-capacity
+  [q sq & {:keys [cmpfn] :or {cmpfn jensen-shannon}}]
+  (catch-all (cmpfn (probs q sq)
+                    (reconstruct-dict q sq))))
+
+
+(defn hybrid-dictionary
+  [l sqs & {:keys [par] :or {par 1}}]
+  {:pre [(or (string? sqs) (coll? sqs))]}
+  (let [sqs (degap-seqs (if (coll? sqs) sqs (read-seqs sqs)))
+        cnt (count sqs)
+        dicts (pxmap #(probs l %) par sqs)
+        Omega (apply set/union (map #(-> % keys set) dicts))
+        hybrid (reducem (fn[k d] {k (get d k 0)})
+                        #(merge-with + %1 %2)
+                        Omega dicts)]
+    (reduce (fn[m [k v]] (assoc m k (double (/ v cnt))))
+            {} hybrid)))
+
+
+
+
+#_(def *sto-hybrid-s4-0712*
+     (let [l 7
+           name-seqs (->> "/home/jsa/Bio/STOfiles/S15stos/FreqDicts/S4_0712.sto.S10regionprots.fna.cmsearch.csv" edu.bc.bio.gaisr.post-db-csv/get-entries
+                          (keep (fn[[nm s e & _]]
+                                  (when (fs/exists? (fs/join default-genome-fasta-dir (str nm ".fna")))
+                                    (str nm "/" (if (> (Integer. s) (Integer. e)) (str e "-" s "/-1") (str s "-" e "/1"))))))
+                          (pxmap gen-name-seq 10))
+           names (map first name-seqs)
+           sqs (map second name-seqs)
+           sqs-hd (hybrid-dictionary l sqs :par 10)
+           refsqs (->> (read-seqs "/home/jsa/Bio/STOfiles/S15stos/FreqDicts/S4_0712.sto") degap-seqs)
+           sto-hd (hybrid-dictionary l refsqs :par 10)
+           dicts (pxmap #(probs l %) 10 sqs)
+           ;;sqsds (sort (pxmap #(DX||Y % sqs-hd) 10 dicts))
+           stods (pxmap #(DX||Y % sto-hd) 10 dicts)
+           nms-stods (sort-by second (map (fn[nm d] [nm d]) names stods))
+           xs (range (count sqs))
+           chart (incanter.charts/scatter-plot
+                  xs (map second nms-stods)
+                  :x-label "Sequence"
+                  :y-label "RE to Hybrid"
+                  :title (str "Sto to Hybrid, Resolution: " l))
+           ;;chart (incanter.charts/add-points chart xs sqsds)
+           ]
+       (incanter.core/view chart)
+       nms-stods))
+
+
+##_(def *sto-hybrid-s4-0712-wctx*
+     (let [l 7
+           delta 5000
+           names (->> "/home/jsa/Bio/STOfiles/S15stos/FreqDicts/S4_0712.sto.S10regionprots.fna.cmsearch.csv"
+                      edu.bc.bio.gaisr.post-db-csv/get-entries
+                      (keep (fn[[nm s e & _]]
+                              (when (fs/exists? (fs/join default-genome-fasta-dir (str nm ".fna")))
+                                (str nm "/" (if (> (Integer. s) (Integer. e)) (str e "-" s "/-1") (str s "-" e "/1")))))))
+           name-seqs (->> names
+                          (pxmap entry-parts 10)
+                          (keep (fn[[nm [s e] sd]]
+                                  (let [s (- s delta) s (if (<= s 0) 1 s) e (+ e delta)]
+                                    (str nm "/" (if (> s e) (str e "-" s "/-1") (str s "-" e "/1"))))))
+                          (pxmap gen-name-seq 10))
+           sqs (map second name-seqs)
+           sqs-hd (hybrid-dictionary l sqs :par 10)
+           refsqs (->> (read-seqs "/home/jsa/Bio/STOfiles/S15stos/FreqDicts/S4_0712.sto" :info :name)
+                       (pxmap entry-parts 10)
+                       (pxmap (fn[[nm [s e] sd]]
+                                (let [s (- s delta) s (if (<= s 0) 1 s) e (+ e delta)]
+                                  (str/join "/" [nm (str s "-" e) sd]))) 10)
+                       (pxmap gen-name-seq 10)
+                       (map second))
+           sto-hd (hybrid-dictionary l refsqs :par 10)
+           dicts (pxmap #(probs l %) 10 sqs)
+           ;;sqsds (sort (pxmap #(DX||Y % sqs-hd) 10 dicts))
+           stods (pxmap #(DX||Y % sto-hd) 10 dicts)
+           nms-stods (sort-by second (map (fn[nm d] [nm d]) names stods))
+           xs (range (count sqs))
+           chart (incanter.charts/scatter-plot
+                  xs (map second nms-stods)
+                  :x-label "Sequence"
+                  :y-label "RE to Hybrid"
+                  :title (str "Sto to Hybrid, Resolution: " l))
+           ;;chart (incanter.charts/add-points chart xs sqsds)
+           ]
+       (incanter.core/view chart)
+       nms-stods))
+
+#_(let [candidates (->> (io/read-lines "/home/jsa/Bio/STOfiles/S15stos/FreqDicts/S4_072612a.ent")
+                      (map entry-parts)
+                      (map (fn[[nm [s e] sd]] [(str nm "/" s "-" e "/" sd) true]))
+                      #_(take 15))
+      s4-picked (into {} candidates)
+      good (into {} (take 250 *sto-hybrid-s4-0712-wctx*))
+      bad (into {} (drop 315 *sto-hybrid-s4-0712-wctx*))]
+  [(count (reduce (fn[m [k v]] (if (get s4-picked k) (assoc m k v) m)) {} good)) (count s4-picked)])
+
+
+#_(def sample-metag-cres
+     (->> (fs/directory-files "/data2/Bio/MetaG1/FastaFiles" ".fa")
+          first read-seqs
+          (take 20)
+          (map #(pxmap (fn[k] [k (CREl k %) (count %)]) 2 (range 3 16)))))
+
+#_(doseq [cres (take 3 sample-metag-cres)]
+  (let [ks (map first cres)
+        cnt (third (first cres))
+        cres (map second cres)]
+    (incanter.core/view
+     (incanter.charts/scatter-plot
+      ks cres
+      :x-label "feature length"
+      :y-label "Commulative Relative Entropy"
+      :title (str "CRE(l, F/F^), len: " cnt
+                  " Fmax: " (round (ln cnt)))))))
+
+#_(doseq [cres foocres]
+  (let [ks (map first cres)
+        cnt (third (first cres))
+        cres (map second cres)]
+    (incanter.core/view (incanter.charts/scatter-plot
+                         ks cres
+                         :x-label "feature length"
+                         :y-label "Commulative Relative Entropy"
+                         :title (str "CRE(l, F/F^), len: " cnt
+                                     " Fmax: " (round (ln cnt)))))))
+
+#_(def count-map
+     (reduce (fn[m file]
+               (reduce (fn[m sq]
+                         (let [cnt (count sq)]
+                           (assoc m cnt (inc (get m cnt 0)))))
+                       m (read-seqs file)))
+             {} (fs/directory-files "/data2/Bio/MetaG1/FastaFiles" ".fa")))
+
+
+#_(def count-maps
+       (map #(do [(fs/basename %)
+                  (reduce (fn[m sq]
+                            (let [cnt (count sq)]
+                              (assoc m cnt (inc (get m cnt 0)))))
+                          {} (read-seqs %))])
+            (fs/directory-files "/data2/Bio/MetaG1/FastaFiles" ".fa")))
+
+#_(sort-by
+   first
+   (map #(do [(first %) (->> % second (sort-by first >)
+                             ((fn[sq]
+                                [(take 5 sq) (drop (- (count sq) 5) sq)])))])
+        count-maps))
+
+
+#_(doseq [cres (map #(pxmap (fn[k] [k (CREl k %) (count %)]) 4 (range 3 16))
+                  (->> "/home/jsa/Bio/STOfiles/S15stos/FreqDicts/S4_0712.sto.S10regionprots.fna.cmsearch.csv"
+                       edu.bc.bio.gaisr.post-db-csv/get-entries
+                       (keep (fn[[nm s e & _]]
+                               (when (fs/exists? (fs/join default-genome-fasta-dir (str nm ".fna")))
+                                 (str nm "/" (if (> (Integer. s) (Integer. e)) (str e "-" s "/-1") (str s "-" e "/1"))))))
+                       gen-name-seq-pairs
+                       (map second)
+                       (take 7)))]
+  (let [ks (map first cres)
+        cnt (third (first cres))
+        cres (map second cres)
+        Fmax (round (ln cnt))]
+    (incanter.core/view
+     (incanter.charts/scatter-plot
+      ks cres
+      :x-label "feature length"
+      :y-label "Commulative Relative Entropy"
+      :title (str "CRE(l, F/F^), len: " cnt
+                  " Fmax: " Fmax)))))
+
+
+#_(doseq [cres (map #(pxmap (fn[k] [k (CREl k %) (count %)]) 4 (range 3 16)) jsa)]
+  (let [ks (map first cres)
+        cnt (third (first cres))
+        cres (map second cres)
+        Fmax (round (ln cnt))]
+    (incanter.core/save
+     (incanter.charts/scatter-plot
+      ks cres
+      :x-label "feature length"
+      :y-label "Commulative Relative Entropy"
+      :title (str "CRE(l, F/F^), len: " cnt
+                  " Fmax: " Fmax))
+     (fs/join "/home/jsa/Bio/MetaGenome/Charts"
+              (str "CREl-" cnt "-fmax-" Fmax ".png")))))

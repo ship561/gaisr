@@ -24,7 +24,7 @@
 ;; OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION    ;;
 ;; WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.          ;;
 ;;                                                                          ;;
-;; Author: Jon Anthony                                                      ;;
+;; Author: Jon Anthony, Shermin Pei                                         ;;
 ;;                                                                          ;;
 ;;--------------------------------------------------------------------------;;
 ;;
@@ -50,8 +50,9 @@
          :only (raise handler-case *condition* print-stack-trace)]
         [clojure.contrib.pprint
          :only (cl-format compile-format)]
-        [incanter.stats :only (hamming-distance)]
         ))
+
+
 
 
 ;;; ----------------------------------------------------------------------
@@ -71,7 +72,8 @@
          (or (not (.startsWith % "#"))
              (or (.startsWith % "#=GC SS_cons")
                  (.startsWith % "#=GC RF"))))
-   (io/read-lines (fs/fullpath stofilespec))))
+   (filter #(not= (str/replace-re #"\s+" "" %) "")
+           (io/read-lines (fs/fullpath stofilespec)))))
 
 
 (defn join-sto-fasta-lines [infilespec origin]
@@ -191,7 +193,11 @@
       alnout)))
 
 
-(declare read-seqs)
+;;; Forward declarations...
+(declare
+ read-seqs
+ entry-parts)
+
 (defn sto->fna
   "Convert a sto file into a fasta file.  Split seq lines into names
    and seq data and interleave these.  Seq data has all gap characters
@@ -213,7 +219,7 @@
   [sto & {printem :printem :or {printem true}}]
   (let [valid-symbols #{"A" "C" "G" "U"
                         "-" "." ":" "_" ","
-                        "a" "b" "B"
+                        "a" "b" "B" "n" "N"
                         "(" ")" "<" ">"}
         [_ seq-lines cons-lines] (join-sto-fasta-lines sto "")
         [_ [_ cl]] (first cons-lines)
@@ -235,12 +241,19 @@
         check-len (fn [[n s]]
                     [n (= (count s) (count cl))])
 
+        ;; Check for valid entry formats.  Defined as parseable by
+        ;; entry-parts
+        check-entry (fn [[n _]]
+                      [n (not (vector? (-> n entry-parts catch-all)))])
+
         chks [["sequence contains invalid character in: "
                (map first (remove #(second %) (map #(check-char %) sl)))]
               ["sequence is repeated - two or more times with same name: "
                (map first (filter #(second %) (map #(check-double-len %) sl)))]
               ["sequence contains invalid length compared to cons-line in: "
                (map first (remove #(second %) (map #(check-len %) sl)))]
+              ["sequence line has invalid entry - not parseable: "
+               (map first (remove #(not (second %)) (map #(check-entry %) sl)))]
               ["consensus structure contains invalid character"
                (if-let [x (second (check-char ["#SS_cons" cl]))]
                  ()
@@ -256,64 +269,6 @@
           :good)
       (filter #(seq (second %)) chks))))
 
-
-(defn nsubseq-sto-file
-  "Reduces the number of sequences in an unblocked sto file. Takes in
-   a sto file and outputs a new sto file with nseq number of
-   lines. The function currently uses hamming distance to determine
-   the difference between any 2 sequnces in the alignment. After the
-   pairwise hamming distances are determined, the alignment is then
-   re-ordered according to these hamming distance vectors. These
-   vectors should allow similar sequences to be grouped together. Once
-   grouped together, the function goes through and eliminates a
-   sequence when comparing seq i and i+1. i+1 is removed if the two
-   sequences are less different than a set threshold, thr=0.5
-   initially. The loop compares i and i+1 then i+2 vs i+3 and so
-   forth. The threshold will increase by 0.01 each loop so that the
-   final list of sequences will be nseq long."
-
-  [infile outfile nseq]
-  (let [[gc-lines seq-lines cons-lines] (join-sto-fasta-lines infile "")
-        ;;create a map where k=name v=[hamming distance vector seq]
-        calc-diff (fn [inseqs] (reduce (fn [m [n [_ s1]]]
-                                   (assoc m n
-                                          [(vec (for [[_ [_ s2]] inseqs]
-                                                  (hamming-distance s1 s2)))
-                                           s1]))
-                                 {} inseqs))
-        ;;returns a map k=name v=seq. removes the hamming distance
-        ;;from the vector
-        remove-diff (fn [x] (into {} (map (fn [[nm [_ sq]]]
-                                           [nm sq])
-                                         x)))
-        ;;output of new sto file to outfile
-        print-sto (fn [x]
-                    (io/with-out-writer outfile
-                      (doseq [gc gc-lines] (println gc))
-                      (doseq [sl x]
-                        (let [[nm [_ sq]] sl]
-                          (cl-format true "~A~40T~A~%" nm sq)))
-                      (doseq [cl cons-lines]
-                        (let [[nm [_ sq]] cl]
-                          (cl-format true "~A~40T~A~%" nm sq)))))]
-    (print-sto
-      (loop [m (into {} (sort-by #(first (last %)) (calc-diff seq-lines)))
-             nm m
-             thr 0.05]
-        (let [i (first (keys m))
-              j (second (keys m))
-              [_ s1] (m i)
-              [_ s2] (m j)
-              diff (/ (hamming-distance s1 s2) (count s1))]
-          (if (> (count nm) nseq)
-            (if (> (count m) 3)
-              (recur (dissoc m i j)
-                     (if (< diff thr) (dissoc nm j) nm)
-                     thr)
-              (recur nm
-                     (if (< diff thr) (dissoc nm j) nm)
-                     (+ thr 0.01)))
-            nm))))))
 
 
 
@@ -375,7 +330,8 @@
 
 (defn gen-name-seq
   "Generate a pair [entry genome-seq], from ENTRY as possibly modified
-   by DELTA and RNA.  ENTRY is a string \"name/range/strand\", where
+   by [L|R]DELTA and RNA.  ENTRY is a string \"name/range/strand\",
+   where
 
    name is the genome NC name (and we only currently support NCs),
 
@@ -390,8 +346,8 @@
    ldelta < 0 _removes_ |ldelta| bases from 5', ldelta > 0 'tacks on'
    ldelta extra bases to the 5' end.  Defaults to 0 (no change).
 
-   RDELTA is an integer, which will be _added_ to the end.  So, ldelta
-   < 0 _removes_ |ldelta| bases from 3', ldelta > 0 'tacks on' ldelta
+   RDELTA is an integer, which will be _added_ to the end.  So, rdelta
+   < 0 _removes_ |rdelta| bases from 3', rdelta > 0 'tacks on' rdelta
    extra bases to the 3' end.  Defaults to 0 (no change).
 
    If RNA is true, change Ts to Us, otherwise return unmodified
@@ -436,7 +392,8 @@
    should always be the default location.
   "
   [entries & {:keys [basedir strand ldelta rdelta rna]
-              :or {basedir default-genome-fasta-dir strand 0 delta 0 rna true}}]
+              :or {basedir default-genome-fasta-dir
+                   strand 0 ldelta 0 rdelta 0 rna true}}]
   (let [entries (if (string? entries) (io/read-lines entries) entries)
         entries (if (= 0 strand) entries (map #(str % "/" strand) entries))]
     (map #(gen-name-seq
@@ -624,14 +581,17 @@
             #(re-find #"[A-Za-z0-9._/-]+" (first %))))))
 
 (defn read-seqs
-  "Read the sequences in FILESPEC and return set as a seq (Clojure
-  seq!).  Filespec can denote either a fna, aln, sto, or gma file
-  format file.
+  "Read the sequences in FILESPEC and return set as a lazy
+  (Clojure!) seq.  Filespec can denote either a fna, aln, sto, or gma
+  file format file.
   "
   [filespec & {info :info :or {info :data}}]
   (let [type (fs/ftype filespec)
         f   (seqline-info-mapper type info)
-        sqs (str/split-lines (slurp filespec))
+        ;;sqs (str/split-lines (slurp filespec)) ; <-- NOT LAZY!!
+        sqs (filter #(let [l (str/replace-re #"^\s+" "" %)]
+                       (and (not= l "") (not (.startsWith l "#"))))
+                    (io/read-lines filespec))
         sqs (if (re-find #"^CLUSTAL" (first sqs)) (rest sqs) sqs)
         sqs (drop-until #(re-find #"^(>[A-Za-z]|[A-Za-z])" %) sqs)
         sqs (if (in type ["fna" "fa"]) (partition 2 sqs) sqs)
