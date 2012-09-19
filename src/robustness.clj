@@ -4,6 +4,7 @@
            [clojure.contrib.io :as io]
            [incanter.stats :as stats]
            [incanter.charts :as charts]
+           [clojure.contrib.json :as json]
            )
   (:use edu.bc.bio.seq-utils
         edu.bc.bio.sequtils.files
@@ -72,8 +73,13 @@
   "takes a string s and  returns neutrality of the seq  when compared
    to each of the 3L 1-mutant neighbors"
 
-  [s]
-  (let [st (fold s)
+  [s & [{foldtype :foldtype :or {foldtype "mfe"}}]]
+  (let [st (cond
+            (= foldtype "mfe")
+            (fold s)
+
+            (= foldtype "centroid")
+            (first (suboptimals s 10000)))
         neighbors (mutant-neighbor s) ]
     (map (fn [neighbor]
            (/ (- (count s) (levenshtein st (fold neighbor)))
@@ -113,7 +119,8 @@
                               :dir "/home/kitia/Desktop/RNAmutants/")
                     :out)
         RNAsubopt ((shell/sh "RNAsubopt"
-                             "-p" (str n)
+                             "-p" (str n) ;samples according to
+                                          ;Boltzmann distribution
                              :in s)
                    :out)
         out (->> RNAsubopt str/split-lines)
@@ -220,7 +227,7 @@
         ]
     (clojure.contrib.io/with-out-writer f 
       (print "var foo=")
-      (prn (clojure.contrib.json/json-str xy)))))
+      (prn (json/json-str xy)))))
 
 
 (defn combinedset []
