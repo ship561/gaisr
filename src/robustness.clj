@@ -69,37 +69,6 @@
                (concat (distinct cand) x)))
       (take n (distinct cand)))))
 
-(defn neutrality
-  "takes a string s and  returns neutrality of the seq  when compared
-   to each of the 3L 1-mutant neighbors"
-
-  [s & [{foldtype :foldtype :or {foldtype "mfe"}}]]
-  (let [st (cond
-            (= foldtype "mfe")
-            (fold s)
-
-            (= foldtype "centroid")
-            (first (suboptimals s 10000)))
-        neighbors (mutant-neighbor s) ]
-    (map (fn [neighbor]
-           (/ (- (count s) (levenshtein st (fold neighbor)))
-              (count s)))
-         neighbors)))
-
-(defn neutrality_rand
-  "neutrality from finding a random seq with the same structure. if neutrality
-   for native seq > rand seq then the native seq is more robust."
-  
-  ([target]
-     (neutrality_rand target 100))
-  
-  ([target n]
-     (let [cand (inverse-fold target n)]
-       #_(prn distinct? cand)
-       ;;(filter #(= target (fold %)) cand)
-       (map #(stats/mean (neutrality %)) cand))))
-
-
 (defn suboptimals
   "Finds the centroid structure of suboptimal structures and a vector
    representation using 0's and 1's using a RNAmutants or RNAsubopt. s
@@ -151,6 +120,39 @@
     ;;(prn (apply str (vals (Z->centroid partition-function))))
     [centroid (struct->vector centroid)]
     ))
+
+(defn neutrality
+  "takes a string s and  returns neutrality of the seq  when compared
+   to each of the 3L 1-mutant neighbors"
+
+  [s & [{foldtype :foldtype :or {foldtype "mfe"}}]]
+  (let [st (cond
+            (= foldtype "mfe")
+            (fold s)
+
+            (= foldtype "centroid")
+            (first (suboptimals s 10000)))
+        neighbors (mutant-neighbor s) ]
+    (map (fn [neighbor]
+           (/ (- (count s) (levenshtein st (fold neighbor)))
+              (count s)))
+         neighbors)))
+
+(defn neutrality_rand
+  "neutrality from finding a random seq with the same structure. if neutrality
+   for native seq > rand seq then the native seq is more robust."
+  
+  ([target]
+     (neutrality_rand target 100))
+  
+  ([target n]
+     (let [cand (inverse-fold target n)]
+       #_(prn distinct? cand)
+       ;;(filter #(= target (fold %)) cand)
+       (map #(stats/mean (neutrality %)) cand))))
+
+
+
 
 (defn psdc [dataset]
   (map (fn [wt mut]
@@ -234,7 +236,7 @@
   (let [avgpt (fn [dataset] (map #(map (fn [x] (stats/mean x)) (partition-all 3 %)) dataset))
         makemap (fn [names data] 
                   (into {}
-                        (map (fn [nm x] 
+                        (map (fn [nm x] 0
                                [nm {:wt (first x) :con (rest x)}])
                              names data)))
         exp1 (map avgpt 
@@ -260,3 +262,25 @@
                        (assoc {} :wt w :wtavg (stats/mean w) :conavg c
                               :con con))))
             {} comboexp)))
+
+(defn evaluate-inverse-cons4
+  "let [foo
+   \"/home/peis/bin/gaisr/robustness/inverse-struct-con4.clj\"] Then
+   we are evaluating foo which is a vector of maps where each map only
+   has 1 key (:L10 :L13 :L20 :L21 :FMN). The pSDC has already been
+   found for the wt and each of its 1-mutant neighbors. These values
+   still have to be averaged. The ranking of the WT pSDC value shows
+   the significance of the pSDC value as compared to 100 inverse-fold
+   sequences."
+
+  []
+  
+  (map (fn [k element]
+         (map (fn [x] 
+                (let [[wt & muts] (map stats/mean x)] ;averaging
+                                                      ;individual pSDC values for 1 sequence
+                  [(count (remove #(< wt %) muts)) ;remove mutant pSDC values greater than WT. 
+                   (count muts)])) 
+              (get element k))) ;multiple sequences for each key. so
+                                ;they are mapped over
+       (for [i foo] (first (keys i))) foo))
