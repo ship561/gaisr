@@ -423,7 +423,7 @@
               (if (and (q-1 x) (q-1 y) (q-2 z))
                 (assoc m lmer (/ (* (q-1 x) (q-1 y)) (q-2 z)))
                 m)))
-          {} (for [x (keys q-1) a alpha] (str x a)))))
+          {} (for [x (keys q-1) a alpha] (str x a))))
 
 
 (defn freq-xdict-dict
@@ -570,7 +570,7 @@
        nms-stods))
 
 
-##_(def *sto-hybrid-s4-0712-wctx*
+#_(def *sto-hybrid-s4-0712-wctx*
      (let [l 7
            delta 5000
            names (->> "/home/jsa/Bio/STOfiles/S15stos/FreqDicts/S4_0712.sto.S10regionprots.fna.cmsearch.csv"

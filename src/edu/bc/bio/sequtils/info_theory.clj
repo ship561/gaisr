@@ -103,15 +103,15 @@
             (if (gaps? k) m (assoc m k v)))
           {} freq-map))
 
-(defn degap-seqs
-  "Remove gap characters from a sequence or set of sequences.  These
-   would be from an alignment set.  It is not clear how / where useful
-   this is/would be as it destroys the alignment spacing
-  "
-  [seqs]
-  (if (coll? seqs)
-    (map #(str/replace-re #"[-.]+" "" %) seqs)
-    (str/replace-re #"[-.]+" "" seqs)))
+;; (defn degap-seqs
+;;   "Remove gap characters from a sequence or set of sequences.  These
+;;    would be from an alignment set.  It is not clear how / where useful
+;;    this is/would be as it destroys the alignment spacing
+;;   "
+;;   [seqs]
+;;   (if (coll? seqs)
+;;     (map #(str/replace-re #"[-.]+" "" %) seqs)
+;;     (str/replace-re #"[-.]+" "" seqs)))
 
 
 (defn- _adjust-one
