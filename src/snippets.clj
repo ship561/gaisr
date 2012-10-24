@@ -93,7 +93,7 @@
     (doseq [f (io/read-lines "/home/kitia/bin/gaisr/trainset2/neg/list.txt")] 
       (let [dir "/home/kitia/bin/gaisr/trainset2/neg/"
             sto (str (subs f 0 (- (count f) 3)) "sto")
-            m (profile (read-sto (snippet/aln->sto (str dir f) (str dir sto))))
+            m (profile (read-sto (snippets/aln->sto (str dir f) (str dir sto))))
             mi (fn [x]
                  ((group-by (fn [[[i j] _]]
                               (contains? (set
@@ -598,3 +598,18 @@
 
 ;;create charts using highcharts
 
+
+;;;merge data together according to file names
+(let [neut (reduce (fn [m s]
+                                    (let [[nm avg _] (str/split #"," s)]
+                                      (assoc m nm (Double/parseDouble avg))))
+                                  {} (drop 1 (io/read-lines "/home/kitia/bin/gaisr/robustness/train-neut3.csv")))
+                     m (into {} (map (fn [x nm]
+                                       [nm (str/split #" ," x)])
+                                     (drop 1 (io/read-lines "/home/kitia/bin/gaisr/trainset2/train2.csv")) (concat (io/read-lines "/home/kitia/bin/gaisr/trainset2/pos/list.txt") (io/read-lines "/home/kitia/bin/gaisr/trainset2/neg/list.txt"))))
+                     x (merge-with cons neut m)]
+                 
+                 (io/with-out-writer "/home/kitia/bin/gaisr/trainset2/train5.csv"
+                   (println "name, neutrality, zscore, sci, information, MI, JS, pairwise identity, number of seqs, class")
+                   (doseq [[nm i] x]
+                     (println nm "," (str/join ", " i)))))
