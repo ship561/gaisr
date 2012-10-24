@@ -35,3 +35,23 @@
                                 (r))
                          (* x (Math/sqrt (/ (* -2 (log s)) s)))))))]
     (+ mu (* sigma (norm)))))
+
+(defn mean
+  "Takes a frequency map where k=value and v=frequency. Returns a mean for the frequency map"
+  
+  [m]
+  (let [[n d] (reduce (fn [v [val n]]
+                        [(+ (first v) (* val n))
+                         (+ (second v) n)])
+                      [0 0] m)]
+    (/ n d)))
+
+(defn variance [m]
+  (let [sumsq (mean (reduce (fn [m [val n]]
+                              (assoc m (* val val) n))
+                            {} m))
+        mu (mean m)]
+    (- sumsq (* mu mu))))
+
+(defn sd [m]
+  (Math/sqrt (variance m)))

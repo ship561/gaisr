@@ -32,10 +32,12 @@
       table ;;returns a map
       )))
 
-;;attempts to remove gaps from a sequence and corresponding structure
-;;and tries to ensure equal number of ( and ). Takes 2 strings, must
-;;be upper-case
+
 (defn remove-gaps
+  "attempts to remove gaps from a sequence and corresponding structure
+   and tries to ensure equal number of ( and ). Takes 2 strings, must
+   be upper-case "
+
   ([inseq] (remove-gaps inseq (apply str (take (count inseq) (cycle ".")))))
   
   ([inseq struct]

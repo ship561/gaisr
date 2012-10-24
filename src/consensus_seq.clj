@@ -36,14 +36,18 @@
     [ptr buf]))
 
 ;;read stockholm file creates a map where the key=name val=sequence
-(defn read-sto [f]
+(defn read-sto [f & {with-names :with-names
+                     :or {with-names false}}]
   (let [[gc-lines seq-lines cons-lines] (join-sto-fasta-lines f "")
         cov (first (map #(last (str/split #"\s+" %))
                 (filter #(.startsWith % "#=GC cov_SS_cons") gc-lines)))
         cl (map #(last (second %))
                 (filter #(.startsWith (first %) "#=GC SS_cons") cons-lines))
-        sl (reduce (fn [v [_ [_ sq]]]
-                     (conj v (str/replace-re #"T" "U" (.toUpperCase sq))))
+        sl (reduce (fn [v [nm [_ sq]]]
+                     (let [sq (str/replace-re #"T" "U" (.toUpperCase sq))]
+                       (if-not with-names
+                         (conj v sq)
+                         (conj v [nm sq]))))
                 [] seq-lines)]
     (assoc {} :seqs sl :cons cl :file f :cov cov)))
 
@@ -53,8 +57,10 @@
 
 ;;change the stucture line to something that can be read by RNAfold
 (defn change-parens [struct]
-  (str/replace-re #"\<" "("
-                  (str/replace-re #"\>" ")" struct)))
+  (->> struct
+       (str/replace-re #"\<" "(")
+       (str/replace-re #"\>" ")" )
+       (str/replace-re #"\:|\-" "." )))
 
 (defn energy-of-seq [profile]
   (jna-invoke Void RNA/read_parameter_file "/home/kitia/Desktop/ViennaRNA-2.0.0/rna_andronescu2007.par")

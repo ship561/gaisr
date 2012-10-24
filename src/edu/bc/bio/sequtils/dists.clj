@@ -602,7 +602,7 @@
 
 (defn get-entries
   [filespec]
-  (let [fspec (fs/fullpath filespec)
+  #_(let [fspec (fs/fullpath filespec)
         ftype (fs/ftype fspec)]
     (if (not= ftype "csv")
       (read-seqs filespec :info :name)

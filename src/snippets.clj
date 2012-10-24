@@ -65,7 +65,8 @@
                                           (apply + (map second id))))))
     (prn "number of seqs" (count (m :seqs)))))
 
-
+;;;generate the trainsets for the SVM. need to be done in the
+;;;consensus_seq namespace. 
 (do (io/with-out-writer "/home/kitia/bin/gaisr/trainset2/train2.csv"
       (println "zscore, sci, information, MI, JS, pairwise identity, number of seqs, class")
       (doseq [f (io/read-lines "/home/kitia/bin/gaisr/trainset2/pos/list.txt")] 
@@ -501,7 +502,13 @@
 
 
 
+(defn freqn->list
+  "Takes a frequency map and makes a list of it so that the values (x)
+  are represented n-times in the list. List can then be used to find
+  summary statistics."
 
+  [m]
+   (flatten (map (fn[[x n]] (repeat n x)) m)))
 
 
 
