@@ -120,21 +120,24 @@
   "takes an alignment in Clustal W format and produces a sto file by using RNAalifold to determine
    the structure and then making it into a sto file adding header and a consensus line"
 
-  [aln sto & {fold_alg :fold_alg :or {Q "RNAalifold" }}]
+  [in-aln out-sto & {fold_alg :fold_alg :or {Q "RNAalifold" }}]
   (if (= fold_alg "RNAalifold")
-    (let [st (->> ((shell/sh "RNAalifold"  "-P" "/home/kitia/Desktop/ViennaRNA-2.0.0/rna_andronescu2007.par" "-r" "--noPS" aln) :out)
+    (let [st (->> ((shell/sh "RNAalifold"
+                             "-P" "/home/kitia/Desktop/ViennaRNA-2.0.0/rna_andronescu2007.par"
+                             "-r" "--noPS" in-aln) :out)
                   (str/split-lines)
                   second
                   (str/split #" ")
                   first)
-          sq (rest (second (join-sto-fasta-lines aln "")))]
-      (io/with-out-writer sto
+          sq (rest (second (join-sto-fasta-lines in-aln "")))]
+      (io/with-out-writer out-sto
         (println "# STOCKHOLM 1.0\n")
         (doseq [[n [_ s]] sq]
           (cl-format true "~A~40T~A~%" n (str/replace-re #"\-" "." s)))
         (cl-format true "~A~40T~A~%" "#=GC SS_cons" st)
         (println "//"))
-      sto)
+      out-sto) ;return out sto filename
+    ;;else use cmfinder
     (shell/sh "perl" "/home/kitia/bin/gaisr/src/mod_cmfinder.pl" aln sto)))
 
 (defn markov-chain-seq
@@ -334,8 +337,8 @@
 
 ;;gets structures out of sto files and then does a variety of calcs on it
 (for [f (remove #(or (= % "RF01510-seed.sto")
-                           (= % "RF01510-seed.neg1.sto"))
-                                     (io/read-lines "/home/kitia/bin/gaisr/trainset/list2.txt")) ;;use trainset/list2 or trainset/neg/list-sto-only
+                     (= % "RF01510-seed.neg1.sto"))
+                (io/read-lines "/home/kitia/bin/gaisr/trainset/list2.txt")) ;;use trainset/list2 or trainset/neg/list-sto-only
         ]
   (let [c (range 10)
         fdir "/home/kitia/bin/gaisr/trainset/" ;;use either trainset/ or trainset/neg
@@ -502,13 +505,7 @@
 
 
 
-(defn freqn->list
-  "Takes a frequency map and makes a list of it so that the values (x)
-  are represented n-times in the list. List can then be used to find
-  summary statistics."
 
-  [m]
-   (flatten (map (fn[[x n]] (repeat n x)) m)))
 
 
 
@@ -605,3 +602,13 @@
 
 ;;create charts using highcharts
 
+(defn randsto
+  "takes a sto input file and generates a random sto to specified
+  output. Program uses SISSIz to make the random aln. Then the aln is
+  converted to sto format. Returns the file name of the new sto"
+
+  [insto outsto]
+  (let [fname (str/take (- (count insto) 3) insto)
+        inaln (str fname "sto")
+        aln (str fname "aln")]
+    (shell/sh "SISSIz" "-s" inaln)))

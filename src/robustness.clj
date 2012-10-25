@@ -698,13 +698,7 @@
                                         ;freqmaps into 1 map
                   avg (double (mean list-map))
                   sd (double (sd list-map))
-                  med (double (let [c (sum list-map)
-                                    x (->>(freqn->list list-map)
-                                          sort
-                                          (drop (dec (/ c 2))))]
-                                (if (odd? c)
-                                    (first x)
-                                    (->> x (take 2) stats/mean))))]
+                  med (double (est-median list-map))]
               (assoc m k [med avg sd])))
           {} map-of-per-overlaps))
 
