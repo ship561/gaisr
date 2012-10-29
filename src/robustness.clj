@@ -6,9 +6,11 @@
            [incanter.charts :as charts]
            [clojure.contrib.json :as json]
            [clojure.set :as sets]
+           [edu.bc.fs :as fs]
            )
   (:use edu.bc.bio.seq-utils
         edu.bc.bio.sequtils.files
+        edu.bc.bio.sequtils.snippets-files
         edu.bc.utils
         edu.bc.utils.probs-stats
         edu.bc.utils.snippets-math
@@ -239,7 +241,7 @@
     [(cons stv (map #(second (suboptimals % 10000)) wts)) muts]))
 
 
-(defn subopt-overlap
+(defn subopt-overlap-seq
   "Determine the percent overlap of each suboptimal structure of a
   sequence s to the consensus structure. compares against n suboptimal
   structures.
@@ -257,6 +259,54 @@
                            (count cons-keys)))
                       substruct))))
 
+(defn subopt-overlap-sto
+  "Takes a sto file and finds the suboptimal structure for the WT and
+   each of its 1-mutant neighbors. Returns a vector [sto
+   list-of-lists-of-maps] where each list-of-maps is the percent
+   overlap for a particular sequence and its 1-mutant neighbors. The
+   maps are the particular percent overlap for a 1-mutant neighbor."
+  
+  [sto & {:keys [ncore nsubopt altname]
+          :or {ncore 6 nsubopt 1000 altname sto}}]
+  (let [{l :seqs cons :cons} (read-sto sto :with-names true)
+        cons (change-parens (first cons))]
+    [altname ;return [filename data]
+     (doall
+      ;;go over each seq in the alignment
+      (pxmap
+       (fn [[nm s]] 
+         (let [[s st] (remove-gaps s cons)
+               neighbors (mutant-neighbor s)
+               cons-keys (set (keys (struct->matrix st)))]
+           ;;finds 1000 suboptimal structures and
+           ;;finds the percent overlap of
+           ;;suboptimal structures to the cons struct
+           (doall                 
+            (map (fn [neighbor]
+                   ;;a freqmap of % overlap for each neighbor
+                   (subopt-overlap-seq neighbor cons-keys nsubopt)) 
+                 (concat (list s) neighbors)))));first element is WT rest are mut neighbors
+       ncore
+       l))] ;l=list of seqs in the sto
+    ))
+
+(defn avg-overlap
+  "Takes the map of percent overlaps where it is organized k=file name
+   and v=list of lists of frequency maps of percent overlap of 1000 suboptimal
+   structures for the WT and each of its 1-mutant neighbors"
+  
+  [map-of-per-overlaps]
+  (reduce (fn [m [k list-lists-maps]]
+            (let [list-map (->> list-lists-maps 
+                                (apply concat) ;combines data from all sequences
+                                (apply merge-with +)) ;combines the
+                                        ;freqmaps into 1 map
+                  avg (double (mean list-map))
+                  sd (double (sd list-map))
+                  med (double (median-est list-map))]
+              (assoc m k [med avg sd])))
+          {} map-of-per-overlaps))
+
 (defn main
   "Main function for determining neutrality of all sequences and their
   1-mutant neighbors by finding the percent overlap between the
@@ -272,27 +322,8 @@
     (doall
      ;;go over each sto in the dir provided
      (for [sto (take 3 (filter #(re-seq #"RF00555-seed" %) fsto))]
-       (let [{l :seqs cons :cons} (read-sto (str fdir sto) :with-names true)
-             cons (change-parens (first cons))]
-         [sto ;return [filename data]
-          (doall
-           ;;go over each seq in the alignment
-           (pxmap
-            (fn [[nm s]] 
-              (let [[s st] (remove-gaps s cons)
-                    neighbors (mutant-neighbor s)
-                    cons-keys (set (keys (struct->matrix st)))
-                    ]
-                ;;finds 1000 suboptimal structures and
-                ;;finds the percent overlap of
-                ;;suboptimal structures to the cons struct
-                (doall                 
-                 (map (fn [neighbor]
-                        (subopt-overlap neighbor cons-keys 1000))
-                      (concat (list s) neighbors)))));first element is WT rest are mut neighbors
-            6
-            l))] ;l=seqs
-         )))))
+       (subopt-overlap-sto sto)
+       ))))
 
 
 (defn makechart
@@ -684,23 +715,60 @@
               (assoc m k [avg sd])))
           {} map-of-per-overlaps))
 
+(defn overlap-per-seq
+  "Takes an entry from teh map-of-lists-of-lists-of-maps data
+   structure. This entry has a format of [nm data]. It averages the
+   %overlap for all mutations at a position. Returns a vector of
+   average %overlap by position."
 
-(defn avg-overlap
-  "Takes the map of percent overlaps where it is organized k=file name
-   and v=list of lists of maps of percent overlap of 1000 suboptimal
-   structures for the WT and each of its 1-mutant neighbors"
+  [per-overlaps]
+  (let [[nm data] per-overlaps]
+    (map (fn [ea-seq]
+           (let [wt (mean (first ea-seq))
+                 ;;merges the 3 mutations at a position and finds the mean
+                 muts (for [mut (partition-all 3 (rest ea-seq))]
+                        (->> mut
+                             (apply merge-with +) ;merge freqmaps together
+                             mean))]
+             (vec (cons wt muts)))) ;returns vector starting with wt
+                                    ;then muts
+         data)))
+
+(defn chart-overlap-sto
+  "Takes an entry from the map-of-lists-of-lists-of-maps data
+   structure. It calls the overlap-per-seq to find the avarge
+   %overlaps at each position. Returns a graph of %overlap for each
+   sto. Each line on graph represents 1 sequence from the sto."
+
+  [per-overlaps]
+  (let [lines (overlap-per-seq per-overlaps)
+        l (charts/xy-plot (range 200) (first lines) :title "neg RF00555.4" :series 1 :legend true
+                          :x-label "position" :y-label "mut % overlap with cons")]
+    (view l)
+    (map (fn [i y]
+           (charts/add-lines l (range 200) y :series-label i))
+         (iterate inc 2) (rest lines))))
+
+(defn subopt-significance
+  "Takes an input sto and estimates the significance of the suboptimal
+   structure overlap when compared to n random simulated
+   alignments. Returns the map-of-lists-of-lists-of-maps."
   
-  [map-of-per-overlaps]
-  (reduce (fn [m [k list-lists-maps]]
-            (let [list-map (->> list-lists-maps 
-                                (apply concat) ;combines data from all sequences
-                                (apply merge-with +)) ;combines the
-                                        ;freqmaps into 1 map
-                  avg (double (mean list-map))
-                  sd (double (sd list-map))
-                  med (double (est-median list-map))]
-              (assoc m k [med avg sd])))
-          {} map-of-per-overlaps))
+  [insto & {:keys [ncores nsamples]
+            :or {ncores 3 nsamples 3}}]
+  (concat [(subopt-overlap-sto insto :altname (fs/basename insto))] ;wt subopt overlap
+          ;;shuffled version of sto
+          (pxmap (fn [randsto]                   
+                   (let [result (subopt-overlap-sto randsto :altname (fs/basename randsto))] ;find subopt overlap
+                     (fs/rm randsto)
+                     result))
+                 ncores
+                 (repeatedly nsamples #(sto->randsto insto (fs/tempfile))) ;create n stos
+                 )))
+
+(def foo (let [insto "/home/peis/bin/gaisr/trainset2/pos/RF00167-seed.4.sto"] 
+           (subopt-significance insto)))
+
 
 )
 

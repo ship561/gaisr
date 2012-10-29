@@ -48,6 +48,24 @@
            (for [i (rest (str/split #"" inseq))]
              (change? i))))))
 
+
+
+(defn sto->fasta
+  "converts a sto file to a fasta file. removes the gaps from the
+   sequences. This should be used in order to make a fasta file for
+   input into CMfinder"
+  
+  ([sto & {type :type :or {type :sto }}]
+     (let [lines (second (join-sto-fasta-lines sto ""))]
+       (doseq [[nm [_ sq]] lines]
+         (println (str ">" nm))
+         (println (str/replace-re #"\." "" sq)))))
+  
+  ([sto outfasta]
+     (io/with-out-writer outfasta
+      (sto->fasta sto))))
+
+
 (defn svm-features [f]
   (let [m (profile (read-sto f))
         mi (fn [x]
@@ -116,29 +134,7 @@
                             (apply + (map second id))))) ",")
         (print (count (m :seqs)) ",0\n")))))
 
-(defn aln->sto
-  "takes an alignment in Clustal W format and produces a sto file by using RNAalifold to determine
-   the structure and then making it into a sto file adding header and a consensus line"
 
-  [in-aln out-sto & {fold_alg :fold_alg :or {Q "RNAalifold" }}]
-  (if (= fold_alg "RNAalifold")
-    (let [st (->> ((shell/sh "RNAalifold"
-                             "-P" "/home/kitia/Desktop/ViennaRNA-2.0.0/rna_andronescu2007.par"
-                             "-r" "--noPS" in-aln) :out)
-                  (str/split-lines)
-                  second
-                  (str/split #" ")
-                  first)
-          sq (rest (second (join-sto-fasta-lines in-aln "")))]
-      (io/with-out-writer out-sto
-        (println "# STOCKHOLM 1.0\n")
-        (doseq [[n [_ s]] sq]
-          (cl-format true "~A~40T~A~%" n (str/replace-re #"\-" "." s)))
-        (cl-format true "~A~40T~A~%" "#=GC SS_cons" st)
-        (println "//"))
-      out-sto) ;return out sto filename
-    ;;else use cmfinder
-    (shell/sh "perl" "/home/kitia/bin/gaisr/src/mod_cmfinder.pl" aln sto)))
 
 (defn markov-chain-seq
   "Uses a MCMC to make a new sequence of similar dinucleotide
@@ -311,20 +307,7 @@
       )
     ))
 
-(defn sto->fasta
-  "converts a sto file to a fasta file. removes the gaps from the
-   sequences. This should be used in order to make a fasta file for
-   input into CMfinder"
-  
-  ([sto & {type :type :or {type :sto }}]
-     (let [lines (second (join-sto-fasta-lines sto ""))]
-       (doseq [[nm [_ sq]] lines]
-         (println (str ">" nm))
-         (println (str/replace-re #"\." "" sq)))))
-  
-  ([sto outfasta]
-     (io/with-out-writer outfasta
-      (sto->fasta sto))))
+
 
 (let [d "/home/kitia/bin/gaisr/trainset2/"
               ]
@@ -602,13 +585,4 @@
 
 ;;create charts using highcharts
 
-(defn randsto
-  "takes a sto input file and generates a random sto to specified
-  output. Program uses SISSIz to make the random aln. Then the aln is
-  converted to sto format. Returns the file name of the new sto"
 
-  [insto outsto]
-  (let [fname (str/take (- (count insto) 3) insto)
-        inaln (str fname "sto")
-        aln (str fname "aln")]
-    (shell/sh "SISSIz" "-s" inaln)))
