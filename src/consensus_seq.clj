@@ -17,7 +17,11 @@
         refold
         libsvm2weka
         edu.bc.bio.sequtils.files
-        edu.bc.utils))
+        [edu.bc.bio.sequtils.snippets-files
+         :only (read-sto change-parens)]
+        edu.bc.utils
+        [robustness :only (subopt-overlap-sto)]
+        ))
 
 (def possible_pairs {"AU" 1 "UA" 1 "GC" 1 "CG" 1 "GU" 1 "UG" 1} )
 (def base #{"A" "C" "G" "U" "." "-"} )
@@ -35,32 +39,11 @@
         ptr (pointer buf)]
     [ptr buf]))
 
-;;read stockholm file creates a map where the key=name val=sequence
-(defn read-sto [f & {with-names :with-names
-                     :or {with-names false}}]
-  (let [[gc-lines seq-lines cons-lines] (join-sto-fasta-lines f "")
-        cov (first (map #(last (str/split #"\s+" %))
-                (filter #(.startsWith % "#=GC cov_SS_cons") gc-lines)))
-        cl (map #(last (second %))
-                (filter #(.startsWith (first %) "#=GC SS_cons") cons-lines))
-        sl (reduce (fn [v [nm [_ sq]]]
-                     (let [sq (str/replace-re #"T" "U" (.toUpperCase sq))]
-                       (if-not with-names
-                         (conj v sq)
-                         (conj v [nm sq]))))
-                [] seq-lines)]
-    (assoc {} :seqs sl :cons cl :file f :cov cov)))
 
 (defn write-svm [out-file m]
   (doseq [i m]
     (println i)))
 
-;;change the stucture line to something that can be read by RNAfold
-(defn change-parens [struct]
-  (->> struct
-       (str/replace-re #"\<" "(")
-       (str/replace-re #"\>" ")" )
-       (str/replace-re #"\:|\-" "." )))
 
 (defn energy-of-seq [profile]
   (jna-invoke Void RNA/read_parameter_file "/home/kitia/Desktop/ViennaRNA-2.0.0/rna_andronescu2007.par")
@@ -233,10 +216,11 @@
               m))
           {} freq-map))
  
-(defn mutual_info_only_bp [info bp-loc]
+(defn mutual_info_only_bp
   "returns a vector of mutual information only at positions where
    there is base pairing provided by alignment."
-
+  
+  [info bp-loc]
   (let [bp-loc (if (seq? bp-loc) (first bp-loc) bp-loc)]
     (map second (filter (fn [[[i j] v]]
                           (contains? (set bp-loc) [i j]))
@@ -365,19 +349,78 @@
                                           (apply + (map second id))))))
     (prn "number of seqs" (count (m :seqs)))))
 
-(defn main-sto [sto class]
-  (let [m (profile sto)]
-    (println (stats/mean (zscore m)) ","
-             (sci (energy-of-aliseq2 m) (energy-of-seq2 m)) ","
-             (stats/mean (information_only_bp (information m) (m :pairs))) ","
-             ;; (stats/mean (information_only_bp (entropy m) (m :pairs))) ","
-             (stats/mean (mutual_info_only_bp (mutual_info m) (m :pairs))) ","
-             ;; (stats/mean (mutual_info_only_bp (gutell_mutual_info m) (m :pairs))) ","
-             (let [id (pairwise_identity (m :seqs))]
-               (double (/ (apply + (map first id))
-                          (apply + (map second id))))) ","
-             (count (m :seqs)) ","
-             class)))
+#_(defn main-sto-old
+    "DEPRECATED"
+
+    [sto class]
+    (let [m (profile sto)]
+      (println (stats/mean (zscore m)) ","
+               (sci (energy-of-aliseq2 m) (energy-of-seq2 m)) ","
+               (stats/mean (information_only_bp (information m) (m :pairs))) ","
+               ;; (stats/mean (information_only_bp (entropy m) (m :pairs))) ","
+               (stats/mean (mutual_info_only_bp (mutual_info m) (m :pairs))) ","
+               ;; (stats/mean (mutual_info_only_bp (gutell_mutual_info m) (m :pairs))) ","
+               (let [id (pairwise_identity (m :seqs))]
+                 (double (/ (apply + (map first id))
+                            (apply + (map second id))))) ","
+                            (count (m :seqs)) ","
+                            class)))
+
+(defn main-sto
+  "Takes a sto and the class 0 or 1. Performs the various calculations
+   for various features. Prints the resulting feat ure vector to the
+   console.
+
+   This version does not yet calculate the neutrality. Also need to
+   add the name of file in to integrate with future data. "
+
+  [sto class]
+  (let [m (profile (read-sto sto))
+        ;;gets only the base paired keys
+        mi (fn [x]
+             ((group-by (fn [[[i j] _]]
+                          (contains? (set
+                                      (apply concat (map #(vec %) (m :pairs))))
+                                     [i j]))
+                        x) true))]
+    (print (-> (->> (subopt-overlap-sto sto)
+                vector
+                avg-overlap)
+               first
+               second
+               (get :mean)))
+    (print (stats/mean (zscore m)) ",")
+    (print (sci (energy-of-aliseq2 m) (energy-of-seq2 m)) ",")
+    (print (stats/mean (information_only_bp (gutell_calcs/entropy-sto m) (m :pairs))) ",")
+    (print (stats/mean (->> (mi (gutell_calcs/mutual_info-sto m)) (into {}) vals)) ",")
+    (print (stats/mean (information_only_bp (reduce (fn [x i]
+                                                      (assoc x i (gutell_calcs/JS (col->prob (->> (transpose (m :seqs))
+                                                                                                  (drop i)
+                                                                                                  first)
+                                                                                             :gaps true) :Q (m :background))))
+                                                    {} (range (m :length))) (m :pairs))) ",")
+    (print (let [id (pairwise_identity (m :seqs))]
+             (double (/ (apply + (map first id))
+                        (apply + (map second id))))) ",")
+    (print (count (m :seqs)) ",")
+    (print class "\n")))
+
+(defn cur-make-svm-features
+  "Current method to make the train2, train3 csvs. Takes no inputs as
+   the program is setup by default. Reads the list of files in
+   [pos|neg]/list.txt. Does the calculations for each of the features
+   and then prints out the resulting feature vectors and class to the
+   file train2.csv. "
+
+  [outfile]
+  (io/with-out-writer outfile ;"/home/kitia/bin/gaisr/trainset2/train2.csv"
+    (println "zscore, sci, information, MI, JS, pairwise identity, number of seqs, class")
+    (doseq [f (io/read-lines "/home/kitia/bin/gaisr/trainset2/pos/list.txt")] 
+      (let [fdir "/home/kitia/bin/gaisr/trainset2/pos/"]
+        (main-sto (str fdir f) 1)))
+    (doseq [f (io/read-lines "/home/kitia/bin/gaisr/trainset2/neg/list.txt")] 
+      (let [fdir "/home/kitia/bin/gaisr/trainset2/neg/"]
+        (main-sto (str fdir f) 0)))))
 
 ;; (let [negfiles (io/read-lines "/home/kitia/bin/gaisr/trainset/negtrainset.txt")
 ;;       posfiles (io/read-lines "/home/kitia/bin/gaisr/trainset/postrainset.txt")
@@ -399,3 +442,84 @@
 ;;   (jna-invoke Void RNA/read_parameter_file "/home/kitia/Desktop/ViennaRNA-2.0.0/rna_andronescu2007.par")
 ;;   (println "e = " (jna-invoke Float RNA/fold s ptr))
 ;;   (println "struct = " (.getString ptr 0 false)))
+
+#_(defn old-make-svm-features
+    "DEPRECATED"
+    
+    [f]
+    (let [m (profile (read-sto f))
+          mi (fn [x]
+               ((group-by (fn [[[i j] _]]
+                            (contains? (set
+                                        (apply concat (map #(vec %) (m :pairs))))
+                                       [i j]))
+                          x) true))]
+      (prn "zscore" (stats/mean (zscore m)))
+      (prn "sci" (sci (energy-of-aliseq2 m) (energy-of-seq2 m)))
+      (prn "information" (stats/mean (information_only_bp (gutell_calcs/entropy m) (m :pairs))))
+      (prn "mutual info" (stats/mean (->> (mi (gutell_calcs/mutual_info m)) (into {}) vals)))
+      (prn "pairwise identity" (let [id (pairwise_identity (m :seqs))]
+                                 (double (/ (apply + (map first id))
+                                            (apply + (map second id))))))
+      (prn "number of seqs" (count (m :seqs)))))
+
+
+#_(defn make-svm-features-old
+    "DEPRECATED
+
+     Current method to make the train2, train3 csvs. Takes no inputs
+     as the program is setup by default. Reads the list of files in
+     [pos|neg]/list.txt. Does the calculations for each of the
+     features and then prints out the resulting feature vectors and
+     class to the file train2.csv. "
+
+  []
+  (do (io/with-out-writer "/home/kitia/bin/gaisr/trainset2/train2.csv"
+      (println "zscore, sci, information, MI, JS, pairwise identity, number of seqs, class")
+      (doseq [f (io/read-lines "/home/kitia/bin/gaisr/trainset2/pos/list.txt")] 
+        (let [fdir "/home/kitia/bin/gaisr/trainset2/pos/"
+              m (profile (read-sto (str fdir f)))
+              mi (fn [x]
+                   ((group-by (fn [[[i j] _]]
+                                (contains? (set
+                                            (apply concat (map #(vec %) (m :pairs))))
+                                           [i j]))
+                              x) true))]
+          (print (stats/mean (zscore m)) ",")
+          (print (sci (energy-of-aliseq2 m) (energy-of-seq2 m)) ",")
+          (print (stats/mean (information_only_bp (gutell_calcs/entropy m) (m :pairs))) ",")
+          (print (stats/mean (->> (mi (gutell_calcs/mutual_info m)) (into {}) vals)) ",")
+          (print (stats/mean (information_only_bp (reduce (fn [x i]
+                                                          (assoc x i (gutell_calcs/JS (col->prob (->> (transpose (m :seqs))
+                                                                                         (drop i)
+                                                                                         first)
+                                                                                    :gaps true) :Q (m :background))))
+                                                        {} (range (m :length))) (m :pairs))) ",")
+          (print (let [id (pairwise_identity (m :seqs))]
+                   (double (/ (apply + (map first id))
+                              (apply + (map second id))))) ",")
+          (print (count (m :seqs)) ",1\n")))
+    (doseq [f (io/read-lines "/home/kitia/bin/gaisr/trainset2/neg/list.txt")] 
+      (let [dir "/home/kitia/bin/gaisr/trainset2/neg/"
+            sto (str (subs f 0 (- (count f) 3)) "sto")
+            m (profile (read-sto (snippet/aln->sto (str dir f) (str dir sto))))
+            mi (fn [x]
+                 ((group-by (fn [[[i j] _]]
+                              (contains? (set
+                                          (apply concat (map #(vec %) (m :pairs))))
+                                         [i j]))
+                            x) true))]
+        (print (stats/mean (zscore m)) ",")
+        (print (sci (energy-of-aliseq2 m) (energy-of-seq2 m)) ",")
+        (print (stats/mean (information_only_bp (gutell_calcs/entropy m) (m :pairs))) ",")
+        (print (stats/mean (->> (mi (gutell_calcs/mutual_info m)) (into {}) vals)) ",")
+        (print (stats/mean (information_only_bp (reduce (fn [x i]
+                                                          (assoc x i (gutell_calcs/JS (col->prob (->> (transpose (m :seqs))
+                                                                                         (drop i)
+                                                                                         first)
+                                                                                    :gaps true) :Q (m :background))))
+                                                        {} (range (m :length))) (m :pairs))) ",")
+        (print (let [id (pairwise_identity (m :seqs))]
+                 (double (/ (apply + (map first id))
+                            (apply + (map second id))))) ",")
+        (print (count (m :seqs)) ",0\n"))))))

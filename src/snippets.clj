@@ -30,7 +30,7 @@
 
 (defn randseq
   "takes a sequence and toggles changes so that it will become a
-   random sequence th at shares a thr of sequence identity"
+   random sequence that shares a thr of sequence identity"
 
   [inseq thr]
   (let [b #{"A" "C" "G" "U"}
@@ -48,112 +48,6 @@
            (for [i (rest (str/split #"" inseq))]
              (change? i))))))
 
-
-
-(defn sto->fasta
-  "converts a sto file to a fasta file. removes the gaps from the
-   sequences. This should be used in order to make a fasta file for
-   input into CMfinder"
-  
-  ([sto & {type :type :or {type :sto }}]
-     (let [lines (second (join-sto-fasta-lines sto ""))]
-       (doseq [[nm [_ sq]] lines]
-         (println (str ">" nm))
-         (println (str/replace-re #"\." "" sq)))))
-  
-  ([sto outfasta]
-     (io/with-out-writer outfasta
-      (sto->fasta sto))))
-
-
-(defn svm-features [f]
-  (let [m (profile (read-sto f))
-        mi (fn [x]
-             ((group-by (fn [[[i j] _]]
-                          (contains? (set
-                                      (apply concat (map #(vec %) (m :pairs))))
-                                     [i j]))
-                        x) true))]
-    (prn "zscore" (stats/mean (zscore m)))
-    (prn "sci" (sci (energy-of-aliseq2 m) (energy-of-seq2 m)))
-    (prn "information" (stats/mean (information_only_bp (gutell_calcs/entropy m) (m :pairs))))
-    (prn "mutual info" (stats/mean (->> (mi (gutell_calcs/mutual_info m)) (into {}) vals)))
-    (prn "pairwise identity" (let [id (pairwise_identity (m :seqs))]
-                               (double (/ (apply + (map first id))
-                                          (apply + (map second id))))))
-    (prn "number of seqs" (count (m :seqs)))))
-
-;;;generate the trainsets for the SVM. need to be done in the
-;;;consensus_seq namespace. 
-(do (io/with-out-writer "/home/kitia/bin/gaisr/trainset2/train2.csv"
-      (println "zscore, sci, information, MI, JS, pairwise identity, number of seqs, class")
-      (doseq [f (io/read-lines "/home/kitia/bin/gaisr/trainset2/pos/list.txt")] 
-        (let [m (profile (read-sto (str "/home/kitia/bin/gaisr/trainset2/pos/" f)))
-              mi (fn [x]
-                   ((group-by (fn [[[i j] _]]
-                                (contains? (set
-                                            (apply concat (map #(vec %) (m :pairs))))
-                                           [i j]))
-                              x) true))]
-          (print (stats/mean (zscore m)) ",")
-          (print (sci (energy-of-aliseq2 m) (energy-of-seq2 m)) ",")
-          (print (stats/mean (information_only_bp (gutell_calcs/entropy m) (m :pairs))) ",")
-          (print (stats/mean (->> (mi (gutell_calcs/mutual_info m)) (into {}) vals)) ",")
-          (print (stats/mean (information_only_bp (reduce (fn [x i]
-                                                          (assoc x i (gutell_calcs/JS (col->prob (->> (transpose (m :seqs))
-                                                                                         (drop i)
-                                                                                         first)
-                                                                                    :gaps true) :Q (m :background))))
-                                                        {} (range (m :length))) (m :pairs))) ",")
-          (print (let [id (pairwise_identity (m :seqs))]
-                   (double (/ (apply + (map first id))
-                              (apply + (map second id))))) ",")
-          (print (count (m :seqs)) ",1\n")))
-    (doseq [f (io/read-lines "/home/kitia/bin/gaisr/trainset2/neg/list.txt")] 
-      (let [dir "/home/kitia/bin/gaisr/trainset2/neg/"
-            sto (str (subs f 0 (- (count f) 3)) "sto")
-            m (profile (read-sto (snippet/aln->sto (str dir f) (str dir sto))))
-            mi (fn [x]
-                 ((group-by (fn [[[i j] _]]
-                              (contains? (set
-                                          (apply concat (map #(vec %) (m :pairs))))
-                                         [i j]))
-                            x) true))]
-        (print (stats/mean (zscore m)) ",")
-        (print (sci (energy-of-aliseq2 m) (energy-of-seq2 m)) ",")
-        (print (stats/mean (information_only_bp (gutell_calcs/entropy m) (m :pairs))) ",")
-        (print (stats/mean (->> (mi (gutell_calcs/mutual_info m)) (into {}) vals)) ",")
-        (print (stats/mean (information_only_bp (reduce (fn [x i]
-                                                          (assoc x i (gutell_calcs/JS (col->prob (->> (transpose (m :seqs))
-                                                                                         (drop i)
-                                                                                         first)
-                                                                                    :gaps true) :Q (m :background))))
-                                                        {} (range (m :length))) (m :pairs))) ",")
-        (print (let [id (pairwise_identity (m :seqs))]
-                 (double (/ (apply + (map first id))
-                            (apply + (map second id))))) ",")
-        (print (count (m :seqs)) ",0\n")))))
-
-(defn aln->sto
-  "takes an alignment in Clustal W format and produces a sto file by using RNAalifold to determine
-   the structure and then making it into a sto file adding header and a consensus line"
-
-  [aln sto & {fold_alg :fold_alg :or {Q "RNAalifold" }}]
-  (if (= fold_alg "RNAalifold")
-    (let [st (->> ((shell/sh "RNAalifold"  "-P" "/home/kitia/Desktop/ViennaRNA-2.0.0/rna_andronescu2007.par" "-r" "--noPS" aln) :out)
-                  (str/split-lines)
-                  second
-                  (str/split #" ")
-                  first)
-          sq (rest (second (join-sto-fasta-lines aln "")))]
-      (io/with-out-writer sto
-        (println "# STOCKHOLM 1.0\n")
-        (doseq [[n [_ s]] sq]
-          (cl-format true "~A~40T~A~%" n (str/replace-re #"\-" "." s)))
-        (cl-format true "~A~40T~A~%" "#=GC SS_cons" st)
-        (println "//"))
-      sto)
-    (shell/sh "perl" "/home/kitia/bin/gaisr/src/mod_cmfinder.pl" aln sto)))
 
 (defn markov-chain-seq
   "Uses a MCMC to make a new sequence of similar dinucleotide
@@ -507,13 +401,7 @@
 
 
 
-(defn freqn->list
-  "Takes a frequency map and makes a list of it so that the values (x)
-  are represented n-times in the list. List can then be used to find
-  summary statistics."
 
-  [m]
-   (flatten (map (fn[[x n]] (repeat n x)) m)))
 
 
 
@@ -609,4 +497,5 @@
 
 
 ;;create charts using highcharts
+
 

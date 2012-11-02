@@ -62,3 +62,27 @@
                                               "-i"
                                               "-K" "10"])]
     (Evaluation/evaluateModel nn options)))
+
+(defn wekalibsvm-classify [testfile]
+  (let [svm (new LibSVM)
+        ;;trainfile "/home/kitia/mean1.csv"
+        ;;testfile "/home/kitia/test.csv"
+        ;; -K 2 -D 3 -G 0.0 -R 0.0 -N 0.5 -M 40.0 -E 0.0010 -P 0.1
+        model "/home/kitia/Desktop/weka-3-6-5/sto-libsvm.model"
+        options (into-array java.lang.String [;;"-t" trainfile 
+                                              "-T" testfile
+                                              ;;if using a model
+                                              ;;can't use svm
+                                              ;;options -Z or -S
+                                              ;;"-d" "modeltosave.model"
+                                              ;;"-l" "modeltoload.model"
+                                              ;;"-G" "0.0"
+                                              ;;"-C" "1.0"
+                                              "-x" "10"
+                                              "-p" "0"
+                                              "-i"
+                                              ;;"-S" "3" 
+                                              ;;"-Z"
+                                              "-l" model
+                                              ])]
+    (Evaluation/evaluateModel svm options)))
