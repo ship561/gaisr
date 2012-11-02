@@ -581,7 +581,7 @@
   "
   [dist & {logfn :logfn :or {logfn log2}}]
   (if (or (string? dist) (vector? dist))
-    (shannon-entropy dist)
+    (shannon-entropy dist :logfn logfn)
     (let [dist (if (map? dist) (vals dist) dist)]
       (- (sum (fn[v]
                 (let [v (double v)]

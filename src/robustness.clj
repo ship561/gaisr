@@ -20,8 +20,10 @@
         [incanter.core :only (view)]
         refold
         smith-waterman
-        [consensus_seq :only (profile read-sto change-parens)]
-        ))
+        [consensus_seq :only (profile)]
+        [edu.bc.bio.sequtils.snippets-files
+         :only (read-sto change-parens)]
+        )) 
 
 (def homedir (edu.bc.fs/homedir))
 
@@ -104,6 +106,7 @@
                              :in s)
                    :out)
         out (->> RNAsubopt str/split-lines)
+        ;;get the structure lines from output of RNA folding program
         structures (->> (if (some #(re-find #"\w+" %) out)
                           (drop-until #(re-find #"\> sampling \d+" out))
                           out)
@@ -133,8 +136,8 @@
     ;;(doseq [i structures] (prn i))
     ;;(prn (apply str (vals (Z->centroid partition-function))))
   (if centroid-only
-    [centroid (struct->vector centroid)]
-    [centroid map-structures])
+    [centroid (struct->vector centroid)] ;returns centroid and vector representation
+    [centroid map-structures]) ;returns all suboptimal structures
   ))
 
 (defn fold
@@ -158,89 +161,6 @@
    (= foldtype "centroid")
    (first (suboptimals s 10000))))
 
-(defn neutrality
-  "takes a string s and  returns neutrality of the seq  when compared
-   to each of the 3L 1-mutant neighbors"
-
-  [s & {foldtype :foldtype cons :cons n :n
-        :or {foldtype "mfe" cons nil
-             n (+ 3 (count
-                     (filter #(> % 0.05)
-                             (map (fn [i]
-                                    (CREl i (fold s) :alpha ["(" "." ")"] :limit 20))
-                                  (range 4 20)))))}}]
-  (let [st (fold s foldtype)
-        neighbors (mutant-neighbor s)
-        neutfn (fn [x] (/ (- (count s) x)
-                       (count s)))
-        ]
-    (if cons
-      (let [cons cons #_(->> ((profile (read-sto cons)) :structure)
-                      first
-                      (str/replace-re #"\:|\-" "." ))] 
-        (map stats/mean
-             (transpose
-              (map (fn [neighbor]
-                     (let [js (jensen-shannon (probs n cons) (probs n (fold neighbor)))
-                           norm (levenshtein st (fold neighbor))
-                           c (apply levenshtein (-> (sw cons (fold neighbor))
-                                                    first
-                                                    rest))
-                           rnadist (->> ((shell/sh "RNAdistance" 
-                                                   :in (str cons "\n" (fold neighbor)))
-                                         :out)
-                                        (re-find #"\d+" )
-                                        (Integer/parseInt))
-                           ]
-                       [(neutfn norm) (neutfn c) (neutfn rnadist) (- 1 js)]))
-                   neighbors))))
-      (stats/mean
-       (map (fn [neighbor]
-              (neutfn (levenshtein st (fold neighbor))))
-            neighbors))
-       )))
-
-(defn neutrality_rand
-  "neutrality from finding a random seq with the same structure. if neutrality
-   for native seq > rand seq then the native seq is more robust."
-  
-  ([target]
-     (neutrality_rand target 100))
-  
-  ([target n]
-     (let [cand (inverse-fold target n)]
-       #_(prn distinct? cand)
-       ;;(filter #(= target (fold %)) cand)
-       (map #(stats/mean (neutrality %)) cand))))
-
-
-
-
-(defn psdc [dataset]
-  (map (fn [wt mut]
-         (map #(* (Math/sqrt (count wt))
-                  (- 1 (pearsonsCC wt %))) mut))
-       (first dataset) (second dataset)))
-
-(defn generate-vectors
-  "Generates suboptimal structures to find the centroid
-   structure (structure and vector representation) of sequence s. n
-   inverse folded sequences will be generated based on the centroid
-   structure. Then the centroid structure for all 3L 1-mutant
-   neighbors will be found for s and its n inverse folded sequences.
-   Returns the structure of s then the mutuant in vector form."
-
-  [s n]
-  (let [s (.toUpperCase s)
-        [stc stv] (suboptimals s 10000)
-        wts  (inverse-fold stc n)
-        muts (pxmap
-              (fn [i] (doall (map #(second (suboptimals % 10000)) i)))
-              10
-              (map #(mutant-neighbor %) (cons s wts)))] 
-    [(cons stv (map #(second (suboptimals % 10000)) wts)) muts]))
-
-
 (defn subopt-overlap-seq
   "Determine the percent overlap of each suboptimal structure of a
   sequence s to the consensus structure. compares against n suboptimal
@@ -249,9 +169,9 @@
 
   [s cons-keys n]
   (let [[cent substruct] (suboptimals s n :centroid-only false)]
-                          ;;takes percent overlap and
-                          ;;reduces it to a freqmap to
-                          ;;save memeory
+    ;;takes percent overlap and
+    ;;reduces it to a freqmap to
+    ;;save memeory
     (frequencies (map (fn [ks]
                         ;;percent overlap
                         (/ (count (sets/intersection cons-keys
@@ -260,7 +180,9 @@
                       substruct))))
 
 (defn subopt-overlap-sto
-  "Takes a sto file and finds the suboptimal structure for the WT and
+  "This is the main function in the robustness namespace.
+
+   Takes a sto file and finds the suboptimal structure for the WT and
    each of its 1-mutant neighbors. Returns a vector [sto
    list-of-lists-of-maps] where each list-of-maps is the percent
    overlap for a particular sequence and its 1-mutant neighbors. The
@@ -290,22 +212,100 @@
        l))] ;l=list of seqs in the sto
     ))
 
+(defn valid-seq-struct
+  "Checks the sto to make sure that all sequences in the file can form
+   part of the consensus structure. This is useful when ensuring that
+   the shuffled stos will form valid structures. Occassionally,
+   sequences in the sto will not fold into the consensus structure and
+   cause other functions to fail. Returns true if all sequences can
+   fold into part of the cons structure."
+  
+  [sto]
+  (let [{sqs :seqs cons :cons} (read-sto sto :with-names true)
+        cons (change-parens (first cons))
+        valid? (fn [st] (pos? (count (struct->matrix st))))]
+    (every? true?
+            (map (fn [[_ s]]
+                   (let [[_ st] (remove-gaps s cons)]
+                     (valid? st)))
+                 sqs))))
+
 (defn avg-overlap
-  "Takes the map of percent overlaps where it is organized k=file name
-   and v=list of lists of frequency maps of percent overlap of 1000 suboptimal
-   structures for the WT and each of its 1-mutant neighbors"
+  "Takes a map of percent overlaps where it is organized in [k v]
+   pairs. k=file name and v=list of lists of frequency maps of percent
+   overlap of 1000 suboptimal structures for the WT and each of its
+   1-mutant neighbors. Returns a map of maps of the summary stats."
   
   [map-of-per-overlaps]
   (reduce (fn [m [k list-lists-maps]]
-            (let [list-map (->> list-lists-maps 
+            (let [list-maps (->> list-lists-maps 
                                 (apply concat) ;combines data from all sequences
                                 (apply merge-with +)) ;combines the
                                         ;freqmaps into 1 map
-                  avg (double (mean list-map))
-                  sd (double (sd list-map))
-                  med (double (median-est list-map))]
-              (assoc m k [med avg sd])))
+                  avg (double (mean list-maps))
+                  sd (double (sd list-maps))
+                  med (double (median-est list-maps))]
+              (assoc m k {:med med :mean avg :sd sd})))
           {} map-of-per-overlaps))
+
+(defn subopt-significance
+  "Takes an input sto and estimates the significance of the suboptimal
+   structure overlap when compared to n random simulated
+   alignments. Returns the map-of-lists-of-lists-of-maps."
+  
+  [insto & {:keys [ncores nsamples]
+            :or {ncores 3 nsamples 3}}]
+  (concat [(subopt-overlap-sto insto :altname (fs/basename insto))] ;wt subopt overlap
+          ;;shuffled version of sto
+          (pxmap (fn [randsto]                   
+                   (let [result (subopt-overlap-sto randsto :altname (fs/basename randsto))] ;find subopt overlap
+                     (fs/rm randsto)
+                     result))
+                 ncores
+                 (take nsamples
+                       ;;only keep valid stos where the sequences can
+                       ;;form a part of the consensus structure
+                       (filter #(true? (valid-seq-struct %)) 
+                               (repeatedly #(sto->randsto insto (fs/tempfile))))) ;create random stos
+                 )))
+
+;;;-----------------------------------
+;;;Section for visualizing data
+(defn overlap-per-seq
+  "Takes an entry from teh map-of-lists-of-lists-of-maps data
+   structure. This entry has a format of [nm data]. It averages the
+   %overlap for all mutations at a position. Returns a vector of
+   average %overlap by position."
+
+  [per-overlaps]
+  (let [[nm data] per-overlaps]
+    (map (fn [ea-seq]
+           (let [wt (mean (first ea-seq))
+                 ;;merges the 3 mutations at a position and finds the mean
+                 muts (for [mut (partition-all 3 (rest ea-seq))]
+                        (->> mut
+                             (apply merge-with +) ;merge freqmaps together
+                             mean))]
+             (vec (cons wt muts)))) ;returns vector starting with wt
+                                    ;then muts
+         data)))
+
+(defn chart-overlap-sto
+  "Takes an entry from the map-of-lists-of-lists-of-maps data
+   structure. It calls the overlap-per-seq to find the avarge
+   %overlaps at each position. Returns a graph of %overlap for each
+   sto. Each line on graph represents 1 sequence from the sto."
+
+  [per-overlaps]
+  (let [lines (overlap-per-seq per-overlaps)
+        l (charts/xy-plot (range 200) (first lines) :title "neg RF00555.4" :series 1 :legend true
+                          :x-label "position" :y-label "mut % overlap with cons")]
+    (view l)
+    (map (fn [i y]
+           (charts/add-lines l (range 200) y :series-label i))
+         (iterate inc 2) (rest lines))))
+
+;;;---------------------------------------------------
 
 (defn main
   "Main function for determining neutrality of all sequences and their
@@ -326,111 +326,12 @@
        ))))
 
 
-(defn makechart
-  "creates a JSON datastructure for a chart from a map. The JSON
-   output file in .js format can then be used to create a highcharts
-   chart
-
-   f is typically \"gaisr/robustness/highchart-test.js\""
-  
-  [f dataset title subtitle]
-  (let [;;abc (map #(map (fn [x] (stats/mean x)) (partition-all 3 %))
-   ;;barr)
-        abc (map #(map (fn [x] (stats/mean x)) (partition-all 3 %)) dataset)
-        wt (first abc)
-        n (count wt)
-        xy {:chart {
-                    :renderTo "container",
-                    :type "line",
-                    :marginRight 130,
-                    :marginBottom 50
-                    :height 500}
-            :title {:text title,
-                    :x -20
-                    }
-            :subtitle {:text subtitle 
-                       :x -20}
-            :xAxis {:title {:text "position"} 
-                    :categories (vec (range 1 (inc n)))}
-            :yAxis {:title {:text "pSDC"} 
-                    :min 0 :maxPadding 0.001
-                    :plotLines [{:value 0
-                                 :width 1
-                                 :color "#0808080"}]}
-            :legend {:layout "vertical"
-                     :align "right"
-                     :verticalAlign "top"
-                     :x -10
-                     :y 100
-                     :borderWidth 0}
-            :series (vec
-                     (conj
-                      (map (fn [i y]
-                             {:name (str "neg" i)
-                              :data (vec y)
-                              :visible true})
-                           (iterate inc 1) (rest abc))
-                      {:name "wt"
-                       :data (vec wt)}
-                      ))}
-        ]
-    (clojure.contrib.io/with-out-writer f 
-      (print "var foo=")
-      (prn (json/json-str xy)))))
 
 
-(defn combinedset []
-  (let [avgpt (fn [dataset] (map #(map (fn [x] (stats/mean x)) (partition-all 3 %)) dataset))
-        makemap (fn [names data] 
-                  (into {}
-                        (map (fn [nm x] 0
-                               [nm {:wt (first x) :con (rest x)}])
-                             names data)))
-        exp1 (map avgpt 
-                  (map psdc 
-                       (read-string (slurp "/home/peis/bin/gaisr/robustness/inverse-struct-con.clj"))))
-        exp1 (makemap [:L10seq2 :L13 :L20 :L21] exp1)
-        exp2 (map avgpt
-                  (map psdc 
-                       (read-string (slurp "/home/peis/bin/gaisr/robustness/inverse-struct-con2.clj"))))
-        exp2 (makemap [:L10seq1 :L10seq2 :L13 :L20 :L21] exp2)                             
-        exp3 (map avgpt (read-string (slurp "/home/peis/bin/gaisr/robustness/inverse-struct-con3.clj")))
-        exp3 (makemap [:L10seq1 :L10seq2 :L13 :L20 :L21 :FMN] exp3)
-        comboexp (merge-with (fn [a b]
-                               (let [{curwt :wt curcon :con} a
-                                     {newwt :wt newcon :con} b]
-                                 (assoc {} :wt (map + curwt newwt) :con (concat curcon newcon))))
-                             exp1 exp2 exp3)]
-    (reduce (fn [m [k {wt :wt con :con}]]
-              (let [n {:L10seq1 2 :L10seq2 3 :L13 3 :L20 3 :L21 3 :FMN 1}
-                    w (map (fn [x] (/ x (n k))) wt)
-                    c (map stats/mean con)]
-                (assoc m k 
-                       (assoc {} :wt w :wtavg (stats/mean w) :conavg c
-                              :con con))))
-            {} comboexp)))
 
-#_(defn evaluate-inverse-cons4
-  "let [foo
-   \"/home/peis/bin/gaisr/robustness/inverse-struct-con4.clj\"] Then
-   we are evaluating foo which is a vector of maps where each map only
-   has 1 key (:L10 :L13 :L20 :L21 :FMN). The pSDC has already been
-   found for the wt and each of its 1-mutant neighbors. These values
-   still have to be averaged. The ranking of the WT pSDC value shows
-   the significance of the pSDC value as compared to 100 inverse-fold
-   sequences."
 
-  []
-  
-  (map (fn [k element]
-         (map (fn [x] 
-                (let [[wt & muts] (map stats/mean x)] ;averaging
-                                                      ;individual pSDC values for 1 sequence
-                  [(count (remove #(< wt %) muts)) ;remove mutant pSDC values greater than WT. 
-                   (count muts)])) 
-              (get element k))) ;multiple sequences for each key. so
-                                ;they are mapped over
-       (for [i foo] (first (keys i))) foo))
+
+
 
 
 (comment 
@@ -715,61 +616,17 @@
               (assoc m k [avg sd])))
           {} map-of-per-overlaps))
 
-(defn overlap-per-seq
-  "Takes an entry from teh map-of-lists-of-lists-of-maps data
-   structure. This entry has a format of [nm data]. It averages the
-   %overlap for all mutations at a position. Returns a vector of
-   average %overlap by position."
 
-  [per-overlaps]
-  (let [[nm data] per-overlaps]
-    (map (fn [ea-seq]
-           (let [wt (mean (first ea-seq))
-                 ;;merges the 3 mutations at a position and finds the mean
-                 muts (for [mut (partition-all 3 (rest ea-seq))]
-                        (->> mut
-                             (apply merge-with +) ;merge freqmaps together
-                             mean))]
-             (vec (cons wt muts)))) ;returns vector starting with wt
-                                    ;then muts
-         data)))
 
-(defn chart-overlap-sto
-  "Takes an entry from the map-of-lists-of-lists-of-maps data
-   structure. It calls the overlap-per-seq to find the avarge
-   %overlaps at each position. Returns a graph of %overlap for each
-   sto. Each line on graph represents 1 sequence from the sto."
 
-  [per-overlaps]
-  (let [lines (overlap-per-seq per-overlaps)
-        l (charts/xy-plot (range 200) (first lines) :title "neg RF00555.4" :series 1 :legend true
-                          :x-label "position" :y-label "mut % overlap with cons")]
-    (view l)
-    (map (fn [i y]
-           (charts/add-lines l (range 200) y :series-label i))
-         (iterate inc 2) (rest lines))))
-
-(defn subopt-significance
-  "Takes an input sto and estimates the significance of the suboptimal
-   structure overlap when compared to n random simulated
-   alignments. Returns the map-of-lists-of-lists-of-maps."
-  
-  [insto & {:keys [ncores nsamples]
-            :or {ncores 3 nsamples 3}}]
-  (concat [(subopt-overlap-sto insto :altname (fs/basename insto))] ;wt subopt overlap
-          ;;shuffled version of sto
-          (pxmap (fn [randsto]                   
-                   (let [result (subopt-overlap-sto randsto :altname (fs/basename randsto))] ;find subopt overlap
-                     (fs/rm randsto)
-                     result))
-                 ncores
-                 (repeatedly nsamples #(sto->randsto insto (fs/tempfile))) ;create n stos
-                 )))
 
 (def foo (let [insto "/home/peis/bin/gaisr/trainset2/pos/RF00167-seed.4.sto"] 
            (subopt-significance insto)))
 
-
+(def signif (future (timefn (fn [] (let [fdir "/home/peis/bin/gaisr/trainset2/pos/"]
+                                          (doall (map (fn [insto]
+                     [insto (into {} (subopt-significance (str fdir insto) :ncores 2 :nsamples 100))])
+                                                      (filter #(re-find #"\.3\.sto" %) (fs/listdir fdir)))))))))
 )
 
 

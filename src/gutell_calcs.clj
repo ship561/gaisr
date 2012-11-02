@@ -7,9 +7,12 @@
             [clojure-csv.core :as csv]
             [clojure.java.shell :as shell]
             [clojure.contrib.seq :as seq])
-  (:use [consensus_seq :only [read-sto profile col->prob]]
+  (:use [consensus_seq :only [profile col->prob]]
+        [edu.bc.bio.sequtils.snippets-files
+         :only (read-sto)]
         [edu.bc.utils]
-        [edu.bc.bio.sequtils.files]))
+        [edu.bc.bio.sequtils.files]
+        [edu.bc.utils.probs-stats]))
 
 
 (defn fractpairs_contain_nogaps
@@ -45,57 +48,107 @@
   (select-keys m (keys (remove #(< (val %) per) gap_col)))
   )
 
-(defn entropy [profile]
-  (let [fract-map (profile :fract)
-        len (profile :length)
-        ;;sum over all bases using -p*log2(p) at position i
-        H (fn [p-baseb] 
-                    (sum
-                     (map #(* -1 % (Math/log %)) (vals p-baseb))))]
-    (reduce (fn [m i]
-              (assoc m i (H (second (nth fract-map i)))))
-            {} (range len))
-    ))
+#_(defn entropy-old
+    "*DEPRECATED"
+    [profile]
+    (let [fract-map (profile :fract)
+          len (profile :length)
+          ;;sum over all bases using -p*log2(p) at position i
+          H (fn [p-baseb] 
+              (sum
+               (map #(* -1 % (Math/log %)) (vals p-baseb))))]
+      (reduce (fn [m i]
+                (assoc m i (H (second (nth fract-map i)))))
+              {} (range len))
+      ))
+(defn entropy-sto
+  "Finds the entropy of each col of the sto file. Returns a map k=col
+   number and v=entropy"
 
-(defn joint_entropy [profile]
+  [profile]
+  (into {}
+        (map (fn [i col]
+               (vector i (entropy col :logfn log)))
+             (iterate inc 0)
+             (transpose (profile :seqs)))))
+
+#_(defn joint_entropy-old
+    "DEPRECATED"
+    
+    [profile]
+    (let [inseqs (profile :seqs)
+          len (count (first inseqs))
+          freqs (vec (partition 2 (interleave (range (count (first inseqs)))
+                                              (apply map vector (map #(rest (str/split #"" %)) inseqs)))))
+          all-loc (for [i (range len)
+                        j (range (+ 4 i) len)]
+                    [i j])]
+      (reduce (fn [m [i j]]
+                (let [fij (frequencies
+                           (map (fn [b1 b2]
+                                  (str b1 b2))
+                                (second (nth freqs i)) (second (nth freqs j))))
+                      tot (sum (vals fij))
+                      fr (map #(/ (second %) tot ) fij)] ;;fr = percentages
+                  (assoc m [i j]
+                         (sum
+                          (map #(* -1 % (log %)) fr)))))
+              {}  all-loc)
+      ))
+
+(defn joint_entropy-sto
+  "Finds the joint entropy of 2 cols in a sto file. "
+  
+  [profile]
   (let [inseqs (profile :seqs)
-        len (count (first inseqs))
-        freqs (vec (partition 2 (interleave (range (count (first inseqs)))
-                                       (apply map vector (map #(rest (str/split #"" %)) inseqs)))))
-        all-loc (for [i (range len)
-                      j (range (+ 4 i) len)]
-                  [i j])]
-    (reduce (fn [m [i j]]
-              (let [fij (frequencies
-                         (map (fn [b1 b2]
-                                (str b1 b2))
-                              (second (nth freqs i)) (second (nth freqs j))))
-                    tot (sum (vals fij))
-                    fr (map #(/ (second %) tot ) fij)] ;;fr = percentages
-                (assoc m [i j]
-                       (sum
-                        (map #(* -1 % (Math/log %)) fr)))))
-            {}  all-loc)
+        freqs (->> (transpose inseqs) ;groups cols together
+                   (interleave (iterate inc 0)) ;adds col number
+                   (partition 2)
+                   vec)
+        ]
+    (reduce (fn [m [[i coll1] [j coll2]]]
+              (assoc m [i j]
+                     (entropy (joint-probability (fn [a b]
+                                                   (map #(str %1 %2) a b)) ;col pairs
+                                                 false coll1 coll2)
+                              :logfn log)))
+            {}  (combins 2 freqs)) ;all combinations of 2 cols
     ))
 
-(defn mutual_info_ij [Hi Hij i j]
-  (let [Hx (get Hi i)
-        Hy (get Hi j)
-        Hxy (get Hij [i j])]
-    (+ Hx Hy (- Hxy) ))
-  )
+#_(defn mutual_info_ij-old [Hi Hij i j]
+    (let [Hx (get Hi i)
+          Hy (get Hi j)
+          Hxy (get Hij [i j])]
+      (+ Hx Hy (- Hxy) ))
+    )
 
-(defn mutual_info [profile]
+#_(defn mutual_info-old [profile]
+    (let [len (count (first (profile :seqs)))
+          all-loc (for [i (range len)
+                        j (range (+ 4 i) len)]
+                    [i j])
+          fract-freqs (profile :fract)
+          Hx (into {}
+                   (map (fn [i col]
+                          (vector i (entropy col :logfn log)))
+                        (iterate inc 0)
+                        (transpose (profile :seqs))))
+          Hxy (joint_entropy-old profile)]
+      (reduce (fn [m [i j]]
+                (assoc m [i j] (mutual_info_ij-old Hx Hxy i j)))
+              {}  all-loc)))
+
+(defn mutual_info-sto
+  "Finds the mutual information of all pairwise cols in a sto. Returns a map of mutual information"
+
+  [profile]
   (let [len (count (first (profile :seqs)))
-        all-loc (for [i (range len)
-                      j (range (+ 4 i) len)]
-                  [i j])
-        fract-freqs (profile :fract)
-        Hx (entropy profile)
-        Hxy (joint_entropy profile)]
+        ;;Finds entropy of each col
+        Hx (entropy-sto profile)
+        Hxy (joint_entropy-sto profile)] ;joint entropy
     (reduce (fn [m [i j]]
-              (assoc m [i j] (mutual_info_ij Hx Hxy i j)))
-            {}  all-loc)))
+              (assoc m [i j] (+ (Hx i) (Hx j) (- (Hxy [i j])))))
+            {}  (combins 2 (range len)))))
 
 (defn relative_mutual_info
   "Relative mutual information calculated based on only base pairing bases"
