@@ -48,6 +48,24 @@
            (for [i (rest (str/split #"" inseq))]
              (change? i))))))
 
+
+
+(defn sto->fasta
+  "converts a sto file to a fasta file. removes the gaps from the
+   sequences. This should be used in order to make a fasta file for
+   input into CMfinder"
+  
+  ([sto & {type :type :or {type :sto }}]
+     (let [lines (second (join-sto-fasta-lines sto ""))]
+       (doseq [[nm [_ sq]] lines]
+         (println (str ">" nm))
+         (println (str/replace-re #"\." "" sq)))))
+  
+  ([sto outfasta]
+     (io/with-out-writer outfasta
+      (sto->fasta sto))))
+
+
 (defn svm-features [f]
   (let [m (profile (read-sto f))
         mi (fn [x]
@@ -94,7 +112,7 @@
     (doseq [f (io/read-lines "/home/kitia/bin/gaisr/trainset2/neg/list.txt")] 
       (let [dir "/home/kitia/bin/gaisr/trainset2/neg/"
             sto (str (subs f 0 (- (count f) 3)) "sto")
-            m (profile (read-sto (snippets/aln->sto (str dir f) (str dir sto))))
+            m (profile (read-sto (snippet/aln->sto (str dir f) (str dir sto))))
             mi (fn [x]
                  ((group-by (fn [[[i j] _]]
                               (contains? (set
@@ -308,20 +326,7 @@
       )
     ))
 
-(defn sto->fasta
-  "converts a sto file to a fasta file. removes the gaps from the
-   sequences. This should be used in order to make a fasta file for
-   input into CMfinder"
-  
-  ([sto & {type :type :or {type :sto }}]
-     (let [lines (second (join-sto-fasta-lines sto ""))]
-       (doseq [[nm [_ sq]] lines]
-         (println (str ">" nm))
-         (println (str/replace-re #"\." "" sq)))))
-  
-  ([sto outfasta]
-     (io/with-out-writer outfasta
-      (sto->fasta sto))))
+
 
 (let [d "/home/kitia/bin/gaisr/trainset2/"
               ]
@@ -334,8 +339,8 @@
 
 ;;gets structures out of sto files and then does a variety of calcs on it
 (for [f (remove #(or (= % "RF01510-seed.sto")
-                           (= % "RF01510-seed.neg1.sto"))
-                                     (io/read-lines "/home/kitia/bin/gaisr/trainset/list2.txt")) ;;use trainset/list2 or trainset/neg/list-sto-only
+                     (= % "RF01510-seed.neg1.sto"))
+                (io/read-lines "/home/kitia/bin/gaisr/trainset/list2.txt")) ;;use trainset/list2 or trainset/neg/list-sto-only
         ]
   (let [c (range 10)
         fdir "/home/kitia/bin/gaisr/trainset/" ;;use either trainset/ or trainset/neg
@@ -605,18 +610,3 @@
 
 ;;create charts using highcharts
 
-
-;;;merge data together according to file names
-(let [neut (reduce (fn [m s]
-                                    (let [[nm avg _] (str/split #"," s)]
-                                      (assoc m nm (Double/parseDouble avg))))
-                                  {} (drop 1 (io/read-lines "/home/kitia/bin/gaisr/robustness/train-neut3.csv")))
-                     m (into {} (map (fn [x nm]
-                                       [nm (str/split #" ," x)])
-                                     (drop 1 (io/read-lines "/home/kitia/bin/gaisr/trainset2/train2.csv")) (concat (io/read-lines "/home/kitia/bin/gaisr/trainset2/pos/list.txt") (io/read-lines "/home/kitia/bin/gaisr/trainset2/neg/list.txt"))))
-                     x (merge-with cons neut m)]
-                 
-                 (io/with-out-writer "/home/kitia/bin/gaisr/trainset2/train5.csv"
-                   (println "name, neutrality, zscore, sci, information, MI, JS, pairwise identity, number of seqs, class")
-                   (doseq [[nm i] x]
-                     (println nm "," (str/join ", " i)))))
