@@ -55,3 +55,15 @@
 
 (defn sd [m]
   (Math/sqrt (variance m)))
+
+(defn median [m]
+  (let [;m {4 1 2 1 3 1 1 1}
+            m (sort-by key m)
+            m (map (fn [k cdf]
+                     [k cdf])
+                   (keys m) (reductions + (vals m)))
+            c (-> (last m) second)
+            m (drop (dec (/ c 2)) m)]
+        (if (odd? c)
+          (ffirst m)
+          (mean (map #(vector (first %) 1) (take 2 m))))))
