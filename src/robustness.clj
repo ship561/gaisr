@@ -20,7 +20,6 @@
         [incanter.core :only (view)]
         refold
         smith-waterman
-        [consensus_seq :only (profile)]
         [edu.bc.bio.sequtils.snippets-files
          :only (read-sto change-parens)]
         )) 
@@ -255,13 +254,13 @@
   
   [insto & {:keys [ncores nsamples]
             :or {ncores 3 nsamples 3}}]
-  (concat [(subopt-overlap-sto insto :altname (fs/basename insto))] ;wt subopt overlap
-          ;;shuffled version of sto
-          (pxmap (fn [randsto]                   
-                   (let [result (subopt-overlap-sto randsto :altname (fs/basename randsto))] ;find subopt overlap
-                     (fs/rm randsto)
-                     result))
-                 ncores
+  ;;shuffled version of sto
+  (pxmap (fn [randsto]                   
+           (let [result (subopt-overlap-sto randsto :altname (fs/basename randsto))] ;find subopt overlap
+             (fs/rm randsto)
+             result))
+         ncores
+         (concat [(subopt-overlap-sto insto :altname (fs/basename insto))] ;wt subopt overlap
                  (take nsamples
                        ;;only keep valid stos where the sequences can
                        ;;form a part of the consensus structure
@@ -296,9 +295,10 @@
    %overlaps at each position. Returns a graph of %overlap for each
    sto. Each line on graph represents 1 sequence from the sto."
 
-  [per-overlaps]
+  [per-overlaps & {:keys [title]
+                   :or {title "neg RF0555.4"}}]
   (let [lines (overlap-per-seq per-overlaps)
-        l (charts/xy-plot (range 200) (first lines) :title "neg RF00555.4" :series 1 :legend true
+        l (charts/xy-plot (range 200) (first lines) :title title :series 1 :legend true
                           :x-label "position" :y-label "mut % overlap with cons")]
     (view l)
     (map (fn [i y]
@@ -623,10 +623,31 @@
 (def foo (let [insto "/home/peis/bin/gaisr/trainset2/pos/RF00167-seed.4.sto"] 
            (subopt-significance insto)))
 
-(def signif (future (timefn (fn [] (let [fdir "/home/peis/bin/gaisr/trainset2/pos/"]
-                                          (doall (map (fn [insto]
-                     [insto (into {} (subopt-significance (str fdir insto) :ncores 2 :nsamples 100))])
-                                                      (filter #(re-find #"\.3\.sto" %) (fs/listdir fdir)))))))))
+;;;old version. takes up too much memory to finish.
+(def signif (future
+              (timefn
+               (fn [] (let [fdir "/home/peis/bin/gaisr/trainset2/pos/"]
+                       (doall (map (fn [insto]
+                                     [insto
+                                      (into {} (subopt-significance (str fdir insto) :ncores 2 :nsamples 100))])
+                                   (filter #(re-find #"\.3\.sto" %) (fs/listdir fdir)))))))))
+
+;;;finds the significance of the robustness. will only return summary stats
+(def signif (future
+              (timefn
+               (fn [] (let [fdir "/home/peis/bin/gaisr/trainset2/pos/"]
+                       (doall (map (fn [insto]
+                                     (prn insto)
+                                     [insto
+                                      (avg-overlap (subopt-significance (str fdir insto) :ncores 2 :nsamples 100))])
+                                   (filter #(re-find #"\.3\.sto" %) (fs/listdir fdir)))))))))
+
+(let [data (->> foo first second)
+                  wt (get-in data ["RF00167-seed.3.sto" :mean])
+                  muts (for [[k m] (dissoc data "RF00167-seed.3.sto")]
+                         (m :mean))] 
+              (prn wt (mean (frequencies muts)))
+              (view (charts/histogram (cons wt muts))))
 )
 
 
