@@ -47,28 +47,37 @@
                                 (subs s i (inc i)))))))))
 
 (defn inverse-fold
-  "Given a target structure, it will use RNAinverse to find n sequences which fold into an identical structure"
+  "Given a target structure, it will use RNAinverse to find n
+   sequences which fold into a similar structure. If :perfect? is
+   true, only returns sequences which fold into identical structures
+   else returns the first n sequences. Returns a list of sequences."
   
-  [target n]
-  (loop [c 0
-         cand []]
-    (if (< c n)
-      (let [x (remove nil?
-                      (flatten 
-                       (map (fn [[s ensemble]]
-                              (when-not (re-find #"d=" s) (re-find #"\w+" s)))
-                            (->> ((shell/sh "RNAinverse"
-                                            "-Fmp"
-                                            (str "-R" n)
-                                            "-P" "/usr/local/ViennaRNA-2.0.0/rna_andronescu2007.par"
-                                            :in target)
-                                  :out)
-                                 (str/split-lines)
-                                 (partition-all 2))
-                            )))]
-        (recur (count (distinct cand))
-               (concat (distinct cand) x)))
-      (take n (distinct cand)))))
+  [target n & {:keys [perfect?]
+               :or {perfect? true}}]
+  (let [inv-fold (fn [target n perfect?]
+                   (->> (map (fn [[s ensemble]]
+                               (if perfect?
+                                 (when-not (re-find #"d=" s) (re-find #"\w+" s)) ;perfect match
+                                 (re-find #"\w+" s))) ;take all output
+                             ;;calls the RNAinverse to generate inverse-fold seqs
+                             (->> ((shell/sh "RNAinverse"
+                                             "-Fmp"
+                                             (str "-R" n)
+                                             "-P" "/usr/local/ViennaRNA-2.0.0/rna_andronescu2007.par"
+                                             :in target)
+                                   :out)
+                                  str/split-lines
+                                  (partition-all 2)))
+                        flatten
+                        (remove nil? )))] ;imperfect matches removed if they were nil
+    ;;generate the proper number of distinct inverse-fold sequences
+    ;;at most n+c are generated but only n are taken
+    (loop [c 0
+           cand []]
+      (if (< c n)    
+        (recur (count cand) ;number of distinct candidate seqs
+               (distinct (concat cand (inv-fold target n perfect?)))) ;add current list to newly generated ones
+        (take n cand)))))
 
 (defn struct->matrix
   "creates array of bp locations. Array resembles a hash-map where the
@@ -178,6 +187,21 @@
                            (count cons-keys)))
                       substruct))))
 
+(defn subopt-overlap-neighbors
+  "Finds nsubopt suboptimal structures and then finds the percent
+   overlap of the suboptimal structures to the consensus
+   structure. Returns a list-of-maps where each map is the freqmap of
+   the percent overlap for a 1-mutant neighbor."
+
+  [s cons-keys & {:keys [ncore nsubopt]
+                  :or {ncore 1 nsubopt 1000}}]
+  (let [neighbors (mutant-neighbor s)] ;1-mut neighbors
+    (pxmap (fn [neighbor]
+           ;;a freqmap of % overlap for each neighbor
+             (subopt-overlap-seq neighbor cons-keys nsubopt))
+           ncore
+         (concat (list s) neighbors)))) ;first element is WT rest are mut neighbors
+
 (defn subopt-overlap-sto
   "This is the main function in the robustness namespace.
 
@@ -197,16 +221,11 @@
       (pxmap
        (fn [[nm s]] 
          (let [[s st] (remove-gaps s cons)
-               neighbors (mutant-neighbor s)
                cons-keys (set (keys (struct->matrix st)))]
            ;;finds 1000 suboptimal structures and
            ;;finds the percent overlap of
            ;;suboptimal structures to the cons struct
-           (doall                 
-            (map (fn [neighbor]
-                   ;;a freqmap of % overlap for each neighbor
-                   (subopt-overlap-seq neighbor cons-keys nsubopt)) 
-                 (concat (list s) neighbors)))));first element is WT rest are mut neighbors
+           (doall (subopt-overlap-neighbors s cons-keys nsubopt))))
        ncore
        l))] ;l=list of seqs in the sto
     ))
@@ -267,6 +286,35 @@
                        (filter #(true? (valid-seq-struct %)) 
                                (repeatedly #(sto->randsto insto (fs/tempfile))))) ;create random stos
                  )))
+(defn subopt-robustness
+  "Takes an input sto and estimates the significance of the robustness
+   of the sequence. Takes a sequence and the consensus structure and
+   generates n sequences with similar structure. Then finds the
+   neutrality of each inverse-folded sequence. Returns the average
+   %overlap-between-cons-and-suboptimal-structure for each sequence (cons wt
+   muts)"
+
+  [sto n]
+  (let [;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
+        {l :seqs cons :cons} (read-sto sto :with-names true)
+        cons (change-parens (first cons))]
+    [sto
+     (map (fn [[nm s]]
+            (let [[s st] (remove-gaps s cons)
+                  inv-seq (inverse-fold st n :perfect? false) ;list of n inverse-folded seqs
+                  cons-keys (set (keys (struct->matrix st)))
+                  ;;finds the %overlap-between-cons-and-suboptimal-structure for each seq (wt muts)
+                  neut (map (fn [x]
+                              (subopt-overlap-neighbors x cons-keys :nsubopt 1000))
+                            (concat (list s) inv-seq))]
+              ;;average %overlap for each seq
+              (map (fn [x]
+                     (->> x
+                          (apply merge-with +) ;merge each %overlap for mut 
+                          mean
+                          double))
+                   neut)))
+          l)]))
 
 ;;;-----------------------------------
 ;;;Section for visualizing data
@@ -307,7 +355,10 @@
 
 ;;;---------------------------------------------------
 
-(defn main
+;;;---------------------------------------------------
+;;;driver functions which target specific datasets and use functions
+
+(defn main-subopt-overlap
   "Main function for determining neutrality of all sequences and their
   1-mutant neighbors by finding the percent overlap between the
   consensus structure and its suboptimal structures.
@@ -325,10 +376,26 @@
        (subopt-overlap-sto sto)
        ))))
 
+(defn main-subopt-robustness
+  "Driver function for subopt-robustness. Takes input sto file and n
+   inverse-folded structures. Compares the average
+   value (subopt-overlap) of all seqs in the file for the wt seqs to
+   the average value of all inverse-folded seqs. A seq in the sto is
+   defined as robust when the wt average suboptimal overlap is greater
+   than the average average-suboptimal-overlap of all inverse-folded
+   seqs. The wt ranking defines the significance."
+  
+  [sto n]
+  (let [avg-subopt (subopt-robustness sto n) ;list-of-lists average subopt overlap of 1-mut structures
+        rank (map (fn [[wt & muts]] ;rank each individual sequence
+                    (-> (remove #(< % wt) muts)
+                        count
+                        inc))
+                  (second avg-subopt))
+        [wt & muts]  (-> avg-subopt second transpose)]
+    [(stats/mean wt) (stats/mean (flatten muts))]))
 
-
-
-
+;;;----------------------------------------------------
 
 
 
@@ -340,7 +407,7 @@
                 fs (str/split-lines ((shell/sh "ls" :dir (str fdir "pos/")) :out))
                 fsto fs
                 ffasta (map #(str (str/butlast 3 %) "fasta") fs)
-                x (fn [s cons n] (let [cons (->> ((profile (read-sto cons)) :structure)
+                x (fn [s cons n] (let [cons (->> ((read-sto cons) :cons)
                                                 first
                                                 (str/replace-re #"\:|\-" "." ))
                                       foldtype "centroid"
@@ -623,31 +690,47 @@
 (def foo (let [insto "/home/peis/bin/gaisr/trainset2/pos/RF00167-seed.4.sto"] 
            (subopt-significance insto)))
 
-;;;old version. takes up too much memory to finish.
-(def signif (future
-              (timefn
-               (fn [] (let [fdir "/home/peis/bin/gaisr/trainset2/pos/"]
-                       (doall (map (fn [insto]
-                                     [insto
-                                      (into {} (subopt-significance (str fdir insto) :ncores 2 :nsamples 100))])
-                                   (filter #(re-find #"\.3\.sto" %) (fs/listdir fdir)))))))))
+(def signif (future (timefn (fn [] (let [fdir "/home/peis/bin/gaisr/trainset2/pos/"]
+                                          (doall (map (fn [insto]
+                     [insto (into {} (subopt-significance (str fdir insto) :ncores 2 :nsamples 100))])
+                                                      (filter #(re-find #"\.3\.sto" %) (fs/listdir fdir)))))))))
 
-;;;finds the significance of the robustness. will only return summary stats
-(def signif (future
-              (timefn
-               (fn [] (let [fdir "/home/peis/bin/gaisr/trainset2/pos/"]
-                       (doall (map (fn [insto]
-                                     (prn insto)
-                                     [insto
-                                      (avg-overlap (subopt-significance (str fdir insto) :ncores 2 :nsamples 100))])
-                                   (filter #(re-find #"\.3\.sto" %) (fs/listdir fdir)))))))))
+;;;show robustness of structures when comparing a sequence with its cons structure and the
+;;;inverse folded sequence which is similar to the cons structure. This should show that the neutrality
+;;;of the original sequence is significantly robust when compared to its inverse folded sequences.
+(let [sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
+      {l :seqs cons :cons} (read-sto sto :with-names true)
+      cons (change-parens (first cons))]
+  [sto 
+   (pxmap (fn [[nm s]]
+            (let [[s st] (remove-gaps s cons)
+                  inv-fold (fn [target n]
+                             (remove nil?
+                                     (flatten 
+                                      (map (fn [[s ensemble]]
+                                             (re-find #"\w+" s))
+                                           (->> ((shell/sh "RNAinverse"
+                                                           "-Fmp"
+                                                           (str "-R" n)
+                                                           "-P" "/usr/local/ViennaRNA-2.0.0/rna_andronescu2007.par"
+                                                           :in target)
+                                                 :out)
+                                                (str/split-lines)
+                                                (partition-all 2))
+                                           ))))
+                  inv-seq (inv-fold st 100)
+                  cons-keys (set (keys (struct->matrix st)))
+                  neut (map (fn [x]
+                              (subopt-overlap-neighbors x cons-keys :nsubopt 1000))
+                            (concat (list s) inv-seq))]
+              (map (fn [x] (->> x (apply merge-with +) mean double)) neut)))
+          2
+          (take 1 l))])
 
-(let [data (->> foo first second)
-                  wt (get-in data ["RF00167-seed.3.sto" :mean])
-                  muts (for [[k m] (dissoc data "RF00167-seed.3.sto")]
-                         (m :mean))] 
-              (prn wt (mean (frequencies muts)))
-              (view (charts/histogram (cons wt muts))))
+;;;analyze resulting data for avg neutrality
+(let [[wt & muts]  (->> foo second transpose )]
+  [(stats/mean wt) (stats/mean (flatten muts))])
+
 )
 
 
