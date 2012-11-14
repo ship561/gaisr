@@ -225,7 +225,7 @@
            ;;finds 1000 suboptimal structures and
            ;;finds the percent overlap of
            ;;suboptimal structures to the cons struct
-           (doall (subopt-overlap-neighbors s cons-keys nsubopt))))
+           (doall (subopt-overlap-neighbors s cons-keys :nsubopt nsubopt))))
        ncore
        l))] ;l=list of seqs in the sto
     ))
