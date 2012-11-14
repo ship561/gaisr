@@ -3,7 +3,7 @@
            [clojure.java.shell :as shell]
            [clojure.contrib.io :as io]
            [incanter.stats :as stats]
-           [incanter.charts :as charts]
+           ;[incanter.charts :as charts]
            [clojure.contrib.json :as json]
            [clojure.set :as sets]
            [edu.bc.fs :as fs]
@@ -17,7 +17,7 @@
         edu.bc.bio.sequtils.dists
         [clojure.contrib.pprint
          :only (cl-format compile-format)]
-        [incanter.core :only (view)]
+       ; [incanter.core :only (view)]
         refold
         smith-waterman
         [edu.bc.bio.sequtils.snippets-files
@@ -118,8 +118,7 @@
         structures (->> (if (some #(re-find #"\w+" %) out)
                           (drop-until #(re-find #"\> sampling \d+" out))
                           out)
-                        (remove #(re-find #"[^\(\)\.]" %))
-                        )        
+                        (remove #(re-find #"[^\(\)\.]" %)))        
         Z->centroid (fn [matrix] ;converts the list of subopt
                                 ;structures into a centroid
                       (sort-by key
@@ -137,16 +136,17 @@
                                                                   ;to a vector of 0's and 1's
         map-structures (map struct->matrix structures) ;sparse matrix
                                                        ;of each structure
-        partition-function (reduce  (fn [m [k v]]
-                                      (assoc m k (/ v n)))
-                                    {}  (apply merge-with + map-structures))
-        centroid (apply str (vals (Z->centroid partition-function)))]
+        ]
     ;;(doseq [i structures] (prn i))
     ;;(prn (apply str (vals (Z->centroid partition-function))))
-  (if centroid-only
-    [centroid (struct->vector centroid)] ;returns centroid and vector representation
-    [centroid map-structures]) ;returns all suboptimal structures
-  ))
+    (if centroid-only
+      (let [partition-function (reduce  (fn [m [k v]]
+                                          (assoc m k (/ v n)))
+                                        {}  (apply merge-with + map-structures))
+            centroid (apply str (vals (Z->centroid partition-function)))]
+        [centroid (struct->vector centroid)]) ;returns centroid and vector representation
+      [0 map-structures]) ;returns all suboptimal structures
+    ))
 
 (defn fold
   "Folds a sequence of RNA and returns only the target
@@ -176,7 +176,7 @@
   returns a map of frequencies where k=%overlap and v=frequency."
 
   [s cons-keys n]
-  (let [[cent substruct] (suboptimals s n :centroid-only false)]
+  (let [[_ substruct] (suboptimals s n :centroid-only false)]
     ;;takes percent overlap and
     ;;reduces it to a freqmap to
     ;;save memeory
@@ -197,10 +197,10 @@
                   :or {ncore 1 nsubopt 1000}}]
   (let [neighbors (mutant-neighbor s)] ;1-mut neighbors
     (pxmap (fn [neighbor]
-           ;;a freqmap of % overlap for each neighbor
+             ;;a freqmap of % overlap for each neighbor
              (subopt-overlap-seq neighbor cons-keys nsubopt))
            ncore
-         (concat (list s) neighbors)))) ;first element is WT rest are mut neighbors
+           (concat (list s) neighbors)))) ;first element is WT rest are mut neighbors
 
 (defn subopt-overlap-sto
   "This is the main function in the robustness namespace.
@@ -242,11 +242,10 @@
   (let [{sqs :seqs cons :cons} (read-sto sto :with-names true)
         cons (change-parens (first cons))
         valid? (fn [st] (pos? (count (struct->matrix st))))]
-    (every? true?
-            (map (fn [[_ s]]
-                   (let [[_ st] (remove-gaps s cons)]
-                     (valid? st)))
-                 sqs))))
+    (every? true? (map (fn [[_ s]]
+                         (let [[_ st] (remove-gaps s cons)]
+                           (valid? st)))
+                       sqs))))
 
 (defn avg-overlap
   "Takes a map of percent overlaps where it is organized in [k v]
@@ -273,13 +272,13 @@
   
   [insto & {:keys [ncores nsamples]
             :or {ncores 3 nsamples 3}}]
-  ;;shuffled version of sto
-  (pxmap (fn [randsto]                   
-           (let [result (subopt-overlap-sto randsto :altname (fs/basename randsto))] ;find subopt overlap
-             (fs/rm randsto)
-             result))
-         ncores
-         (concat [(subopt-overlap-sto insto :altname (fs/basename insto))] ;wt subopt overlap
+  (concat [(subopt-overlap-sto insto :altname (fs/basename insto))] ;wt subopt overlap
+          ;;shuffled version of sto
+          (pxmap (fn [randsto]                   
+                   (let [result (subopt-overlap-sto randsto :altname (fs/basename randsto))] ;find subopt overlap
+                     (fs/rm randsto)
+                     result))
+                 ncores
                  (take nsamples
                        ;;only keep valid stos where the sequences can
                        ;;form a part of the consensus structure
@@ -337,7 +336,7 @@
                                     ;then muts
          data)))
 
-(defn chart-overlap-sto
+#_(defn chart-overlap-sto
   "Takes an entry from the map-of-lists-of-lists-of-maps data
    structure. It calls the overlap-per-seq to find the avarge
    %overlaps at each position. Returns a graph of %overlap for each
@@ -385,16 +384,70 @@
    than the average average-suboptimal-overlap of all inverse-folded
    seqs. The wt ranking defines the significance."
   
-  [sto n]
-  (let [avg-subopt (subopt-robustness sto n) ;list-of-lists average subopt overlap of 1-mut structures
-        rank (map (fn [[wt & muts]] ;rank each individual sequence
-                    (-> (remove #(< % wt) muts)
-                        count
-                        inc))
-                  (second avg-subopt))
-        [wt & muts]  (-> avg-subopt second transpose)]
-    [(stats/mean wt) (stats/mean (flatten muts))]))
+  [outfile & {:keys [n]
+      :or {n 10}}]
+  (let [ofile outfile ;storage location
+        fdir (str homedir "/bin/gaisr/trainset2/pos/")
+        done-files (when (fs/exists? ofile) (->> (read-string (slurp ofile)) ;read existing data
+                                                 (into {})))]
+    (doseq [instos (->> (filter #(and (re-find #"\.7\.sto" %) ;subset of data
+                                      (not (contains? done-files %))) ;remove done files
+                                (fs/listdir fdir))
+                        (partition-all 2 ) ;group into manageable chuncks
+                        (take 1))]
+      (let [cur (map (fn [insto]
+                       [(keyword insto)
+                        (let [avg-subopt (subopt-robustness (str fdir insto) n) ;list-of-lists average subopt overlap of 1-mut structures
+                              rank (map (fn [[wt & muts]] ;rank each individual sequence
+                                          (-> (remove #(< % wt) muts)
+                                              count
+                                              inc))
+                                        (second avg-subopt))
+                              [wt & muts]  (-> avg-subopt second transpose)]
+                          {:wt (-> wt frequencies mean) :muts (-> muts flatten frequencies mean) :rank rank})])
+                     instos)
+            data (if (fs/exists? ofile) (concat (read-string (slurp ofile)) cur) cur)]
+        (io/with-out-writer ofile
+          (println ";;;generated using main-subopt-robustness. Estimate of the significance of the wild-type sto compared to the inverse folded version.")
+          (prn data))))
+    ))
 
+(defn main-subopt-significance
+  "Estimates the significance of the suboptimal overlaps seen when
+   comparing the wild-type sto to the dinucleotide shuffed
+   version. compares against 100 other stos. Since the process takes a
+   long time to complete, the method constantly writes out to a file
+   ofile.
+
+   Memory usage could be high when it reads in all data and concats.
+
+   Outputs data in the vector-map-of-list-of-lists-of maps
+
+   analyze using: (reduce #(assoc %1 (first %2) (avg-overlap (second
+   %2))) {} (read-string (slurp ofile)))"
+
+  [outfile & {:keys [ncores nsamples]
+              :or {ncores 1 nsamples 1}}]
+  (let [ofile outfile ;storage location
+        fdir (str homedir "/bin/gaisr/trainset2/pos/")
+        done-files (when (fs/exists? ofile) (->> (read-string (slurp ofile)) ;read existing data
+                                                 (into {})
+                                                 ))]
+    (doseq [instos (->> (filter #(and (re-find #"\.3\.sto" %) ;subset of data
+                                      (not (contains? done-files %))) ;remove done files
+                                (fs/listdir fdir))
+                        (partition-all 2 ) ;group into manageable chuncks
+                        #_(take 1))]
+      (let [cur (map (fn [insto]
+                       [insto
+                        ;;compare wild type sto against nsample shuffled versions
+                        (avg-overlap (subopt-significance (str fdir insto) :ncores ncores :nsamples nsamples))])
+                     instos)
+            data (if (fs/exists? ofile) (concat (read-string (slurp ofile)) cur) cur)] ;add new data to existing
+        (io/with-out-writer ofile
+          (println ";;;generated using main-subopt-significance. Estimate of the significance of the wild-type sto compared to the dinucloetide shuffled version.")
+          (prn data)) ;write to file
+        ))))
 ;;;----------------------------------------------------
 
 
