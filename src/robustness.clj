@@ -14,7 +14,7 @@
         edu.bc.utils
         edu.bc.utils.probs-stats
         edu.bc.utils.snippets-math
-        edu.bc.bio.sequtils.dists
+        ;edu.bc.bio.sequtils.dists
         [clojure.contrib.pprint
          :only (cl-format compile-format)]
        ; [incanter.core :only (view)]
@@ -293,7 +293,8 @@
    %overlap-between-cons-and-suboptimal-structure for each sequence (cons wt
    muts)"
 
-  [sto n]
+  [sto n & {:keys [ncores]
+            :or {ncores 1}}]
   (let [;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
         {l :seqs cons :cons} (read-sto sto :with-names true)
         cons (change-parens (first cons))]
@@ -304,7 +305,7 @@
                   cons-keys (set (keys (struct->matrix st)))
                   ;;finds the %overlap-between-cons-and-suboptimal-structure for each seq (wt muts)
                   neut (map (fn [x]
-                              (subopt-overlap-neighbors x cons-keys :nsubopt 1000))
+                              (subopt-overlap-neighbors x cons-keys :nsubopt 1000 :ncore ncores))
                             (concat (list s) inv-seq))]
               ;;average %overlap for each seq
               (map (fn [x]
@@ -384,29 +385,31 @@
    than the average average-suboptimal-overlap of all inverse-folded
    seqs. The wt ranking defines the significance."
   
-  [outfile & {:keys [n]
-      :or {n 10}}]
+  [outfile & {:keys [n ncores]
+      :or {n 10 ncores 2}}]
   (let [ofile outfile ;storage location
         fdir (str homedir "/bin/gaisr/trainset2/pos/")
         done-files (when (fs/exists? ofile) (->> (read-string (slurp ofile)) ;read existing data
                                                  (into {})))]
     (doseq [instos (->> (filter #(and (re-find #"\.7\.sto" %) ;subset of data
-                                      (not (contains? done-files %))) ;remove done files
+                                      (not (contains? done-files (keyword %)))) ;remove done files
                                 (fs/listdir fdir))
                         (partition-all 2 ) ;group into manageable chuncks
-                        (take 1))]
-      (let [cur (map (fn [insto]
-                       [(keyword insto)
-                        (let [avg-subopt (subopt-robustness (str fdir insto) n) ;list-of-lists average subopt overlap of 1-mut structures
-                              rank (map (fn [[wt & muts]] ;rank each individual sequence
-                                          (-> (remove #(< % wt) muts)
-                                              count
-                                              inc))
-                                        (second avg-subopt))
-                              [wt & muts]  (-> avg-subopt second transpose)]
-                          {:wt (-> wt frequencies mean) :muts (-> muts flatten frequencies mean) :rank rank})])
-                     instos)
-            data (if (fs/exists? ofile) (concat (read-string (slurp ofile)) cur) cur)]
+                        (take 4))]
+      (prn instos)
+      (let [cur (doall
+                 (map (fn [insto]
+                        [(keyword insto)
+                         (let [avg-subopt (subopt-robustness (str fdir insto) n :ncores ncores) ;list-of-lists average subopt overlap of 1-mut structures
+                               rank (map (fn [[wt & muts]] ;rank each individual sequence
+                                           (-> (remove #(< % wt) muts)
+                                               count
+                                               inc))
+                                         (second avg-subopt))
+                               [wt & muts]  (-> avg-subopt second transpose)]
+                           {:wt (-> wt frequencies mean) :muts (-> muts flatten frequencies mean) :rank rank})])
+                      instos))
+            data (if (fs/exists? ofile) (doall (concat (read-string (slurp ofile)) cur)) cur)]
         (io/with-out-writer ofile
           (println ";;;generated using main-subopt-robustness. Estimate of the significance of the wild-type sto compared to the inverse folded version.")
           (prn data))))
