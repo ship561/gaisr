@@ -101,24 +101,8 @@
   (let [;;s "AACGAUCCCGGG"
         ;;n 10
         s (.toUpperCase s)
-        RNAmutants 0 #_((shell/sh "./RNAmutants"
-                              "-l" "./lib/"
-                              "--mutation" "1"
-                              "-n" (str n)
-                              "--input-string" s
-                              :dir "/home/kitia/Desktop/RNAmutants/")
-                    :out)
-        RNAsubopt ((shell/sh "RNAsubopt"
-                             "-p" (str n) ;samples according to
-                                          ;Boltzmann distribution
-                             :in s)
-                   :out)
-        out (->> RNAsubopt str/split-lines)
-        ;;get the structure lines from output of RNA folding program
-        structures (->> (if (some #(re-find #"\w+" %) out)
-                          (drop-until #(re-find #"\> sampling \d+" out))
-                          out)
-                        (remove #(re-find #"[^\(\)\.]" %)))        
+        structures (do (declare fold)
+                       (fold s :foldtype "RNAsubopt" :n n))
         Z->centroid (fn [matrix] ;converts the list of subopt
                                 ;structures into a centroid
                       (sort-by key
@@ -152,8 +136,8 @@
   "Folds a sequence of RNA and returns only the target
    structure. Target structure can either be centroid or MFE."
   
-  [s & {:keys [foldtype]
-        :or {foldtype "mfe"}}]
+  [s & {:keys [foldtype n]
+        :or {foldtype "mfe" n 10000}}]
   (cond
    (= foldtype "mfe")
    (->> ((shell/sh "RNAfold"
@@ -167,7 +151,28 @@
         first)
    
    (= foldtype "centroid")
-   (first (suboptimals s 10000))))
+   (first (suboptimals s n))
+
+   (= foldtype "RNAmutants")
+   0 #_(->> ((shell/sh "./RNAmutants"
+                     "-l" "./lib/"
+                     "--mutation" "1"
+                     "-n" (str n)
+                     "--input-string" s
+                     :dir "/home/kitia/Desktop/RNAmutants/")
+           :out)
+          (drop-until #(re-find #"\> sampling \d+" ))
+          (remove #(re-find #"[^\(\)\.]" %)))
+   
+   (= foldtype "RNAsubopt")
+   (->> ((shell/sh "RNAsubopt"
+                   "-p" (str n) ;samples according to
+                                        ;Boltzmann distribution
+                   :in s)
+         :out)
+        str/split-lines
+        (remove #(re-find #"[^\(\)\.]" %)))
+   ))
 
 (defn subopt-overlap-seq
   "Determine the percent overlap of each suboptimal structure of a
@@ -352,6 +357,84 @@
     (map (fn [i y]
            (charts/add-lines l (range 200) y :series-label i))
          (iterate inc 2) (rest lines))))
+
+(defn foo
+  "Compares the distribution of base-pairs and gap chars in each
+   column between the wt and 1-mutant neighbor. Takes a seq and
+   neighbors, consensus structure keys and
+   n=number_suboptimal_structures. Returns a list of vectors where
+   each vector is [mutant-name [ith-col jsd(wt,mut) %overlap]]."
+  
+  [wt neighbors cons-keys n]
+  (let [wt-probs (map #(probs 1 %) (transpose (fold wt :foldtype "RNAsubopt" :n n)))]
+    (for [[nm neighbor] neighbors
+          :let [mut-probs (map #(probs 1 %) (transpose (fold neighbor :foldtype "RNAsubopt" :n n)))
+                overlap (double (mean (subopt-overlap-seq neighbor cons-keys n)))]]
+      ;;find the jsd between the wt col_i and mut col_i
+      (map (fn [i c1 c2]
+             [nm [i (jensen-shannon c1 c2) overlap]])
+           (iterate inc 0) wt-probs mut-probs))))
+
+(defn bar []
+  (let [sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
+                  {sqs :seqs cons :cons} (read-sto sto :with-names true)
+                  cons (change-parens (first cons))
+                  n 10] 
+              (io/with-out-writer "/home/kitia/bin/gaisr/robustness/temp.txt"
+                (println "mutname, pos, jsd, overlap")
+                (doseq [[_ s] (take 1 sqs)]
+                  (let [[wt st] (remove-gaps s cons)
+                        cons-keys (set (keys (struct->matrix st)))
+                        n 1000
+                        neighbors (into {} (mutant-neighbor wt :with-names true))]
+                    (doseq [i (foo wt neighbors cons-keys n)
+                            j i]
+                      (println (str/join "," (flatten j)))))))
+               ))
+(defn abc
+
+  ([sto]
+     (let [sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
+           {sqs :seqs cons :cons} (read-sto sto :with-names true)
+           cons (change-parens (first cons))]
+       (prn sto)
+       (doseq [[seqnm s] sqs]
+         (let [[wt st] (remove-gaps s cons)
+               cons-keys (set (keys (struct->matrix st)))
+               n 1000
+               neighbors (into {} (mutant-neighbor wt :with-names true))
+               loi (->> (foo wt neighbors cons-keys n)
+                        ;;process the jsd to find col of interest
+                        #_(map (fn [jsd]
+                               (remove #(or (< (-> % second second) 0.8) ;jsd
+                                            (> (-> % second third) 0.4)) ;%overlap
+                                       jsd))
+                             )
+                        (remove #(empty? %) )
+                        (map vec ))
+               ]
+           (prn seqnm)
+           (doseq [x loi
+                   [mutnm [pos h overlap]] x]
+             (prn "wt" pos)
+             (prn s)
+             (prn (apply str (repeat 10 "0123456789")))
+             (doseq [i (fold s :foldtype "RNAsubopt" :n 3)]
+               (prn i))
+             (prn seqnm mutnm "pos" pos "jsd" h "overlap" overlap)
+             (prn (neighbors mutnm))
+             (prn (apply str (repeat 10 "0123456789")))
+             (doseq [i (fold (neighbors mutnm) :foldtype "RNAsubopt" :n 3)]
+               (prn i)))))))
+  
+  ([sto outfile]
+     (let [;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
+           ;outfile "/home/kitia/bin/gaisr/robustness/struct-confirm.txt"
+           {l :seqs cons :cons} (read-sto sto :with-names true)
+           cons (change-parens (first cons))]
+       (io/with-out-writer outfile
+         (abc sto))
+      )))
 
 ;;;---------------------------------------------------
 
@@ -787,6 +870,166 @@
 (let [[wt & muts]  (->> foo second transpose )]
   [(stats/mean wt) (stats/mean (flatten muts))])
 
+
+(let [s "UCAAACAAUGAGAACAUUACUUAUUUAUGUCACGAA...UGGGCGUGACGUUUCUACAAGGUG.CCGU.AA.CACCUAACAAUAAGUAAGCUAAUUUAGUCA"
+                  st "...............((((((((((...(.((((.........)))).)(((......((((((.......)))))))))))))))).....)))......."
+                  [s st] (remove-gaps s st)
+                  cons-keys (set (keys (struct->matrix st)))
+                  n 1000
+                  neighbors (mutant-neighbor s :with-names true)
+                  wt (map #(probs 1 %) (transpose (fold s :foldtype "RNAsubopt" :n n)))
+                  loi (->> (for [[nm neighbor] neighbors
+                                 :let [mut (map #(probs 1 %) (transpose (fold neighbor :foldtype "RNAsubopt" :n n)))
+                                       overlap (double (mean (subopt-overlap-seq neighbor cons-keys n)))]]
+                             (map (fn [c1 c2]
+                                    [nm (jensen-shannon c1 c2) overlap])
+                                  wt mut))
+                           transpose
+                           (map (fn [jsd]
+                                  (remove #(or (< (second %) 0.9)
+                                               (> (third %) 0.3))
+                                          jsd))
+                                )
+                           (interleave (iterate inc 0) )
+                           (partition-all 2 )
+                           (remove #(empty? (second %)) )
+                           (map vec ))
+      neighbors (into {} neighbors)
+                  ]
+              (io/with-out-writer "/home/kitia/bin/gaisr/robustness/struct-confirm.txt"
+                (doseq [[pos x] loi
+                        [mutnm h overlap] x]
+                  (prn "wt" pos)
+                  (prn s)
+                  (prn (apply str (repeat 10 "0123456789")))
+                  (doseq [i (fold s :foldtype "RNAsubopt" :n 3)]
+                    (prn i))
+                  (prn mutnm pos h overlap)
+                  (prn (neighbors mutnm))
+                  (prn (apply str (repeat 10 "0123456789")))
+                  (doseq [i (fold (neighbors mutnm) :foldtype "RNAsubopt" :n 3)]
+                    (prn i)))))
+
+
+(let [sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
+                  {l :seqs cons :cons} (read-sto sto :with-names true)
+                  cons (change-parens (first cons))]
+              (io/with-out-writer "/home/kitia/bin/gaisr/robustness/struct-confirm.txt"
+                (prn sto)
+                (doseq [[seqnm s] l]
+                  (let [[s st] (remove-gaps s cons)
+                        cons-keys (set (keys (struct->matrix st)))
+                        n 1000
+                        neighbors (mutant-neighbor s :with-names true)
+                        wt (map #(probs 1 %) (transpose (fold s :foldtype "RNAsubopt" :n n)))
+                        loi (->> (for [[nm neighbor] neighbors
+                                       :let [mut (map #(probs 1 %) (transpose (fold neighbor :foldtype "RNAsubopt" :n n)))
+                                             overlap (double (mean (subopt-overlap-seq neighbor cons-keys n)))]]
+                                   (map (fn [c1 c2]
+                                          [nm (jensen-shannon c1 c2) overlap])
+                                        wt mut))
+                                 transpose
+                                 (map (fn [jsd]
+                                        (remove #(or (< (second %) 0.8)
+                                                     (> (third %) 0.4))
+                                                jsd))
+                                      )
+                                 (interleave (iterate inc 0) )
+                                 (partition-all 2 )
+                                 (remove #(empty? (second %)) )
+                                 (map vec ))
+                        neighbors (into {} neighbors)
+                        ]
+                    (prn seqnm)
+                    (doseq [[pos x] loi
+                            [mutnm h overlap] x]
+                      (prn "wt" pos)
+                      (prn s)
+                      (prn (apply str (repeat 10 "0123456789")))
+                      (doseq [i (fold s :foldtype "RNAsubopt" :n 3)]
+                        (prn i))
+                      (prn mutnm pos h overlap)
+                      (prn (neighbors mutnm))
+                      (prn (apply str (repeat 10 "0123456789")))
+                      (doseq [i (fold (neighbors mutnm) :foldtype "RNAsubopt" :n 3)]
+                        (prn i)))))))
+
+
+(let [s "UCAAACAAUGAGAACAUUACUUAUUUAUGUCACGAA...UGGGCGUGACGUUUCUACAAGGUG.CCGU.AA.CACCUAACAAUAAGUAAGCUAAUUUAGUCA"
+                  st "...............((((((((((...(.((((.........)))).)(((......((((((.......)))))))))))))))).....)))......."
+                  [s st] (remove-gaps s st)
+                  cons-keys (set (keys (struct->matrix st)))
+                  n 1000
+                  neighbors (into {} (mutant-neighbor s :with-names true))
+                  wt (map #(probs 1 %) (transpose (fold s :foldtype "RNAsubopt" :n n)))
+                  loi (->> (for [[nm neighbor] neighbors
+                                 :let [mut (map #(probs 1 %) (transpose (fold neighbor :foldtype "RNAsubopt" :n n)))
+                                       overlap (double (mean (subopt-overlap-seq neighbor cons-keys n)))]]
+                             (map (fn [i c1 c2]
+                                    [nm [i (jensen-shannon c1 c2) overlap]])
+                                  (iterate inc 0) wt mut))
+                           (map (fn [jsd]
+                                  (remove #(or (< (-> % second second) 0.9)
+                                               (> (-> % second third) 0.3))
+                                          jsd))
+                                )
+                           (remove #(empty? %) )
+                           (map vec ))
+                  ]
+              (io/with-out-writer "/home/kitia/bin/gaisr/robustness/struct-confirm.txt"
+                (doseq [x loi
+                        [mutnm [pos h overlap]] x]
+                  (prn "wt" pos)
+                  (prn s)
+                  (prn (apply str (repeat 10 "0123456789")))
+                  (doseq [i (fold s :foldtype "RNAsubopt" :n 3)]
+                    (prn i))
+                  (prn mutnm pos h overlap)
+                  (prn (neighbors mutnm))
+                  (prn (apply str (repeat 10 "0123456789")))
+                  (doseq [i (fold (neighbors mutnm) :foldtype "RNAsubopt" :n 3)]
+                    (prn i)))))
+
+(let [sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
+      {l :seqs cons :cons} (read-sto sto :with-names true)
+      cons (change-parens (first cons))]
+  (io/with-out-writer "/home/kitia/bin/gaisr/robustness/struct-confirm.txt"
+    (prn sto)
+    (doseq [[seqnm s] l]
+      (let [[s st] (remove-gaps s cons)
+            cons-keys (set (keys (struct->matrix st)))
+            n 1000
+            neighbors (mutant-neighbor s :with-names true)
+            wt (map #(probs 1 %) (transpose (fold s :foldtype "RNAsubopt" :n n)))
+            loi (->> (for [[nm neighbor] neighbors
+                           :let [mut (map #(probs 1 %) (transpose (fold neighbor :foldtype "RNAsubopt" :n n)))
+                                 overlap (double (mean (subopt-overlap-seq neighbor cons-keys n)))]]
+                       (map (fn [i c1 c2]
+                              [nm [i (jensen-shannon c1 c2) overlap]])
+                            (iterate inc 0) wt mut))
+                     identity;transpose
+                     (map (fn [jsd]
+                            (remove #(or (< (-> % second second) 0.8)
+                                         (> (-> % second third) 0.4))
+                                    jsd))
+                          )
+                     (remove #(empty? %) )
+                     (map vec ))
+            neighbors (into {} neighbors)
+            ]
+        (prn seqnm)
+        (doseq [x loi
+                [mutnm [pos h overlap]] x]
+          (prn "wt" pos)
+          (prn s)
+          (prn (apply str (repeat 10 "0123456789")))
+          (doseq [i (fold s :foldtype "RNAsubopt" :n 3)]
+            (prn i))
+          (prn mutnm pos h overlap)
+          (prn (neighbors mutnm))
+          (prn (apply str (repeat 10 "0123456789")))
+          (doseq [i (fold (neighbors mutnm) :foldtype "RNAsubopt" :n 3)]
+            (prn i)))))))
 )
 
 
