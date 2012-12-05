@@ -613,3 +613,78 @@
 
 ;;create charts using highcharts
 
+(defn most-likely-ancestor
+  "take a vector of strings and finds the consensus sequence by
+  choosing the most common base at a position."
+
+  [inseqs]
+  (let [inseqs ['ATCCAGCT
+                'GGGCAACT
+                'ATGGATCT
+                'AAGCAACC
+                'TTGGAACT
+                'ATGCCATT
+                'ATGGCACT]
+        inseqs (map str inseqs)
+        max-val (fn [m]
+                  (reduce (fn [[curk curv] [k v]]
+                            (if (> curv v)
+                              [curk curv]
+                              [k v]))
+                          [0 -1] m))]
+    (->> inseqs
+         transpose
+         (map #(frequencies (seq %)))
+         (map max-val)
+         (map first)
+         (apply str))))
+
+(defn gibbs-sampler []
+  (let [inseqs [
+                'aactgtatataaatacagtt
+                
+                'tattggctgtttatacagta
+                
+                'tcctgttaatccatacagca
+                
+                'acctgtataaataaccagta
+                
+                'tgctgtatatactcacagca
+                
+                'aactgtatatacacccaggg
+                
+                'gactgtataaaaccacagcc
+                
+                'tactgtatgagcatacagta
+                
+                'tactgtatataaaaccagtt
+                
+                'tactgtacacaataacagta
+                
+                'TCCTGTATGAAAAACCATTA
+                
+                'cgctggatatctatccagca
+                
+                'tactgatgatatatacaggt
+                
+                'cactggatagataaccagca
+                
+                'tactgtacatccatacagta
+                
+                'tactgtatataaaaacagta
+                
+                'tactgtatattcattcaggt
+                
+                'aactgtttttttatccagta
+                
+                'atctgtatatatacccagct]
+        inseqs (map #(str/lower-case (str %)) inseqs)
+        sample (fn [s i j]
+                 (subs s i j))
+        table (atom {})]
+    (map (fn [s]
+           (let [len (count s)
+                 j 6
+                 i (rand-int (- len j))]
+             (sample s i (+ i j))))
+         inseqs)))
