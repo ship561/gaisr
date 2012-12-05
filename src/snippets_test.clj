@@ -1,5 +1,6 @@
 (ns snippets-test
-  (:require [clojure.test :as test]))
+  (:require [clojure.test :as test])
+  (:use snippets-partition-function :reload))
 
 (defn Z-old
   "Calculates the partition function for a structure (from sequences
@@ -25,10 +26,14 @@
         u 0 ;;min loop size
         ]
     (if (<= (- j i) u) 1
-        (+ (Z i (dec j) S) ;;j unpaired
-           (* (e i j S) (Z (inc i) (dec j) S)) ;;i,j pair
+        (+ (Z-old i (dec j) S) ;;j unpaired
+           (* (e i j S) (Z-old (inc i) (dec j) S)) ;;i,j pair
            (reduce (fn [x k]  ;;k,j paired for an intermediate a<k<b
-                     (+ x (* (e k j S) (Z i (dec k) S) (Z (inc k) (dec j) S))))
+                     (+ x (* (e k j S) (Z-old i (dec k) S) (Z-old (inc k) (dec j) S))))
                    0 (range (inc i) (- j u)))))))
 
 (test/deftest simple-partition (test/is (= 6 (Z-old 0 4 "CGAGC"))))
+(test/deftest simple-partition2 (test/is (= 6 (Z 0 4 "CGAGC" :count true :u 0))))
+(test/deftest complex-partition
+  (test/is (let [s "AUGCUAGUACGGAGCGAGUCUAGCGAGCGAUGUCGUGAGUACUAUAUAUGCGCAUAAGCCACGU"]
+             (= 284850219977421 (Z 0 (-> s count dec) s :count true :u 3)))))

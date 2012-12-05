@@ -49,115 +49,6 @@
              (change? i))))))
 
 
-<<<<<<< HEAD
-
-(defn sto->fasta
-  "converts a sto file to a fasta file. removes the gaps from the
-   sequences. This should be used in order to make a fasta file for
-   input into CMfinder"
-  
-  ([sto & {type :type :or {type :sto }}]
-     (let [lines (second (join-sto-fasta-lines sto ""))]
-       (doseq [[nm [_ sq]] lines]
-         (println (str ">" nm))
-         (println (str/replace-re #"\." "" sq)))))
-  
-  ([sto outfasta]
-     (io/with-out-writer outfasta
-      (sto->fasta sto))))
-
-
-(defn svm-features [f]
-  (let [m (profile (read-sto f))
-        mi (fn [x]
-             ((group-by (fn [[[i j] _]]
-                          (contains? (set
-                                      (apply concat (map #(vec %) (m :pairs))))
-                                     [i j]))
-                        x) true))]
-    (prn "zscore" (stats/mean (zscore m)))
-    (prn "sci" (sci (energy-of-aliseq2 m) (energy-of-seq2 m)))
-    (prn "information" (stats/mean (information_only_bp (gutell_calcs/entropy m) (m :pairs))))
-    (prn "mutual info" (stats/mean (->> (mi (gutell_calcs/mutual_info m)) (into {}) vals)))
-    (prn "pairwise identity" (let [id (pairwise_identity (m :seqs))]
-                               (double (/ (apply + (map first id))
-                                          (apply + (map second id))))))
-    (prn "number of seqs" (count (m :seqs)))))
-
-;;;generate the trainsets for the SVM. need to be done in the
-;;;consensus_seq namespace. 
-(do (io/with-out-writer "/home/kitia/bin/gaisr/trainset2/train2.csv"
-      (println "zscore, sci, information, MI, JS, pairwise identity, number of seqs, class")
-      (doseq [f (io/read-lines "/home/kitia/bin/gaisr/trainset2/pos/list.txt")] 
-        (let [m (profile (read-sto (str "/home/kitia/bin/gaisr/trainset2/pos/" f)))
-              mi (fn [x]
-                   ((group-by (fn [[[i j] _]]
-                                (contains? (set
-                                            (apply concat (map #(vec %) (m :pairs))))
-                                           [i j]))
-                              x) true))]
-          (print (stats/mean (zscore m)) ",")
-          (print (sci (energy-of-aliseq2 m) (energy-of-seq2 m)) ",")
-          (print (stats/mean (information_only_bp (gutell_calcs/entropy m) (m :pairs))) ",")
-          (print (stats/mean (->> (mi (gutell_calcs/mutual_info m)) (into {}) vals)) ",")
-          (print (stats/mean (information_only_bp (reduce (fn [x i]
-                                                          (assoc x i (gutell_calcs/JS (col->prob (->> (transpose (m :seqs))
-                                                                                         (drop i)
-                                                                                         first)
-                                                                                    :gaps true) :Q (m :background))))
-                                                        {} (range (m :length))) (m :pairs))) ",")
-          (print (let [id (pairwise_identity (m :seqs))]
-                   (double (/ (apply + (map first id))
-                              (apply + (map second id))))) ",")
-          (print (count (m :seqs)) ",1\n")))
-    (doseq [f (io/read-lines "/home/kitia/bin/gaisr/trainset2/neg/list.txt")] 
-      (let [dir "/home/kitia/bin/gaisr/trainset2/neg/"
-            sto (str (subs f 0 (- (count f) 3)) "sto")
-            m (profile (read-sto (snippet/aln->sto (str dir f) (str dir sto))))
-            mi (fn [x]
-                 ((group-by (fn [[[i j] _]]
-                              (contains? (set
-                                          (apply concat (map #(vec %) (m :pairs))))
-                                         [i j]))
-                            x) true))]
-        (print (stats/mean (zscore m)) ",")
-        (print (sci (energy-of-aliseq2 m) (energy-of-seq2 m)) ",")
-        (print (stats/mean (information_only_bp (gutell_calcs/entropy m) (m :pairs))) ",")
-        (print (stats/mean (->> (mi (gutell_calcs/mutual_info m)) (into {}) vals)) ",")
-        (print (stats/mean (information_only_bp (reduce (fn [x i]
-                                                          (assoc x i (gutell_calcs/JS (col->prob (->> (transpose (m :seqs))
-                                                                                         (drop i)
-                                                                                         first)
-                                                                                    :gaps true) :Q (m :background))))
-                                                        {} (range (m :length))) (m :pairs))) ",")
-        (print (let [id (pairwise_identity (m :seqs))]
-                 (double (/ (apply + (map first id))
-                            (apply + (map second id))))) ",")
-        (print (count (m :seqs)) ",0\n")))))
-
-(defn aln->sto
-  "takes an alignment in Clustal W format and produces a sto file by using RNAalifold to determine
-   the structure and then making it into a sto file adding header and a consensus line"
-
-  [aln sto & {fold_alg :fold_alg :or {Q "RNAalifold" }}]
-  (if (= fold_alg "RNAalifold")
-    (let [st (->> ((shell/sh "RNAalifold"  "-P" "/home/kitia/Desktop/ViennaRNA-2.0.0/rna_andronescu2007.par" "-r" "--noPS" aln) :out)
-                  (str/split-lines)
-                  second
-                  (str/split #" ")
-                  first)
-          sq (rest (second (join-sto-fasta-lines aln "")))]
-      (io/with-out-writer sto
-        (println "# STOCKHOLM 1.0\n")
-        (doseq [[n [_ s]] sq]
-          (cl-format true "~A~40T~A~%" n (str/replace-re #"\-" "." s)))
-        (cl-format true "~A~40T~A~%" "#=GC SS_cons" st)
-        (println "//"))
-      sto)
-    (shell/sh "perl" "/home/kitia/bin/gaisr/src/mod_cmfinder.pl" aln sto)))
-
-=======
->>>>>>> 415e12463380e021202c08140e203008cbe8bcec
 (defn markov-chain-seq
   "Uses a MCMC to make a new sequence of similar dinucleotide
    frequency. Must give an input sequence s. The function will find
@@ -510,13 +401,7 @@
 
 
 
-(defn freqn->list
-  "Takes a frequency map and makes a list of it so that the values (x)
-  are represented n-times in the list. List can then be used to find
-  summary statistics."
 
-  [m]
-   (flatten (map (fn[[x n]] (repeat n x)) m)))
 
 
 
@@ -617,74 +502,31 @@
   "take a vector of strings and finds the consensus sequence by
   choosing the most common base at a position."
 
-  [inseqs]
-  (let [inseqs ['ATCCAGCT
-                'GGGCAACT
-                'ATGGATCT
-                'AAGCAACC
-                'TTGGAACT
-                'ATGCCATT
-                'ATGGCACT]
-        inseqs (map str inseqs)
-        max-val (fn [m]
-                  (reduce (fn [[curk curv] [k v]]
-                            (if (> curv v)
-                              [curk curv]
-                              [k v]))
-                          [0 -1] m))]
-    (->> inseqs
-         transpose
-         (map #(frequencies (seq %)))
-         (map max-val)
-         (map first)
-         (apply str))))
-
-(defn gibbs-sampler []
-  (let [inseqs [
-                'aactgtatataaatacagtt
-                
-                'tattggctgtttatacagta
-                
-                'tcctgttaatccatacagca
-                
-                'acctgtataaataaccagta
-                
-                'tgctgtatatactcacagca
-                
-                'aactgtatatacacccaggg
-                
-                'gactgtataaaaccacagcc
-                
-                'tactgtatgagcatacagta
-                
-                'tactgtatataaaaccagtt
-                
-                'tactgtacacaataacagta
-                
-                'TCCTGTATGAAAAACCATTA
-                
-                'cgctggatatctatccagca
-                
-                'tactgatgatatatacaggt
-                
-                'cactggatagataaccagca
-                
-                'tactgtacatccatacagta
-                
-                'tactgtatataaaaacagta
-                
-                'tactgtatattcattcaggt
-                
-                'aactgtttttttatccagta
-                
-                'atctgtatatatacccagct]
-        inseqs (map #(str/lower-case (str %)) inseqs)
-        sample (fn [s i j]
-                 (subs s i j))
-        table (atom {})]
-    (map (fn [s]
-           (let [len (count s)
-                 j 6
-                 i (rand-int (- len j))]
-             (sample s i (+ i j))))
-         inseqs)))
+(let [s "AUGCUAGUACGGAU"
+      n (count s)
+      ztable (atom {})
+      Z (fn Z [i j S]
+          (let [S (.toUpperCase S)
+                n (- j i -1)
+                bp? (fn [b1 b2] ;;b1=base1 b2=base2
+                      (let [bp #{"AU" "UA" "GC"  "CG" "GU" "UG"}]
+                        (contains? bp (str b1 b2))))
+                e (fn [i j S] (let [s1 (subs S i (inc i))
+                                   s2 (subs S j (inc j))
+                                   R 2
+                                   T 310
+                                   E (fn [b1 b2] (if (bp? b1 b2) 1 0))] ;;Energy of basepair, E(basepair)
+                               (E s1 s2) #_(Math/exp (/ (E s1 s2) R T -1))))
+                u 0 ;;min loop size
+                result (if (<= (- j i) u) 1
+                           (+ (get @ztable [i (dec j)] (Z i (dec j) S)) ;;j unpaired
+                              (* (e i j S) (get @ztable [(inc i) (dec j)] (Z (inc i) (dec j) S))) ;;i,j pair
+                              (reduce (fn [x k]  ;;k,j paired for an intermediate a<k<b
+                                        (+ x (* (e k j S) (get @ztable [i (dec k)] (Z i (dec k) S)) (get @ztable [(inc k) (dec j)] (Z (inc k) (dec j) S)))))
+                                      0 (range (inc i) (- j u)))))]
+            (swap! ztable #(assoc % [i j] result)) result))]
+  #_(for [i (range 1 n)
+          j (range n)
+          :when (< (+ j i) n)]
+    (swap! ztable #(assoc % [j (+ i j)] (Z j (+ i j) s))))
+  (Z 0 5 s) @ztable)
