@@ -290,6 +290,27 @@
                        (filter #(true? (valid-seq-struct %)) 
                                (repeatedly #(sto->randsto insto (fs/tempfile))))) ;create random stos
                  )))
+
+(defn create-inv-seqs
+  "Generates inverse folded seqs using inverse-fold. If an outfile
+   exists, then it will read it in and then add to the existing list
+   of seqs. Takes a sequence name(nm), structure (st), n inverse seqs
+   to make, and outfile. Returns the list of sequences."
+
+  [nm st n outfile]
+  
+  (let [cur-seqs (if (fs/exists? outfile)
+                   (-> outfile slurp read-string)
+                   {nm []})
+        cur-n (count (cur-seqs nm))
+        inv-seqs (distinct (lazy-cat (cur-seqs nm) (inverse-fold st n :perfect? false)))]
+    (if (>= cur-n n)
+      (cur-seqs nm)
+      (do (doall inv-seqs)
+          (io/with-out-writer outfile
+            (prn (assoc cur-seqs nm (vec inv-seqs))))
+          (take n inv-seqs)))))
+
 (defn subopt-robustness
   "Takes an input sto and estimates the significance of the robustness
    of the sequence. Takes a sequence and the consensus structure and
@@ -298,24 +319,26 @@
    %overlap-between-cons-and-suboptimal-structure for each sequence (cons wt
    muts)"
 
-  [sto n & {:keys [ncores]
-            :or {ncores 1}}]
+  [sto n & {:keys [ncore]
+            :or {ncore 5}}]
   (let [;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
+        inv-sto (str (str/butlast 3 sto) "inv.clj")
         {l :seqs cons :cons} (read-sto sto :with-names true)
-        cons (change-parens (first cons))]
+        cons (change-parens (first cons))
+        ]
     [sto
      (map (fn [[nm s]]
             (let [[s st] (remove-gaps s cons)
-                  inv-seq (inverse-fold st n :perfect? false) ;list of n inverse-folded seqs
+                  inv-seq (create-inv-seqs nm st n inv-sto) ;vector of n inverse-folded seqs
                   cons-keys (set (keys (struct->matrix st)))
-                  ;;finds the %overlap-between-cons-and-suboptimal-structure for each seq (wt muts)
                   neut (map (fn [x]
-                              (subopt-overlap-neighbors x cons-keys :nsubopt 1000 :ncore ncores))
+                              (subopt-overlap-neighbors x cons-keys :ncore ncore :nsubopt 1000))
                             (concat (list s) inv-seq))]
-              ;;average %overlap for each seq
+              ;;average %overlap for each wt and mut
               (map (fn [x]
-                     (->> x
-                          (apply merge-with +) ;merge each %overlap for mut 
+                     (->> x ;mut composed of 1000 subopt structs
+                          (apply merge-with +) ;merge %overlap freqmap
+                                        ;for mut 
                           mean
                           double))
                    neut)))
@@ -483,7 +506,7 @@
       (let [cur (doall
                  (map (fn [insto]
                         [(keyword insto)
-                         (let [avg-subopt (subopt-robustness (str fdir insto) n :ncores ncores) ;list-of-lists average subopt overlap of 1-mut structures
+                         (let [avg-subopt (subopt-robustness (str fdir insto) n) ;list-of-lists average subopt overlap of 1-mut structures
                                rank (map (fn [[wt & muts]] ;rank each individual sequence
                                            (-> (remove #(< % wt) muts)
                                                count
