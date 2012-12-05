@@ -69,15 +69,18 @@
                                   str/split-lines
                                   (partition-all 2)))
                         flatten
-                        (remove nil? )))] ;imperfect matches removed if they were nil
-    ;;generate the proper number of distinct inverse-fold sequences
-    ;;at most n+c are generated but only n are taken
-    (loop [c 0
-           cand []]
-      (if (< c n)    
-        (recur (count cand) ;number of distinct candidate seqs
-               (distinct (concat cand (inv-fold target n perfect?)))) ;add current list to newly generated ones
-        (take n cand)))))
+                        (remove nil? ))) ;imperfect matches removed if
+                                        ;they were nil
+        ;;generate the proper number of distinct inverse-fold sequences
+        inv-seq (loop [c 0
+                       cand []]
+                  (if (< c n)    
+                    (recur (count cand) ;distinct candidate seqs
+                           ;;add current list to newly generated ones
+                           #_(distinct (apply concat cand (pmap (fn [_] (inv-fold target (min 10 (quot n 2)) perfect?)) (range 2))))
+                           (distinct (concat cand (inv-fold target n perfect?)))) 
+                    (take n cand)))] 
+    inv-seq))
 
 (defn struct->matrix
   "creates array of bp locations. Array resembles a hash-map where the
@@ -501,9 +504,8 @@
                                       (not (contains? done-files (keyword %)))) ;remove done files
                                 (fs/listdir fdir))
                         (partition-all 2 ) ;group into manageable chuncks
-                        (take 4))]
-      (prn instos)
-      (let [cur (doall
+                        (take 1))]
+      ([let cur (doall
                  (map (fn [insto]
                         [(keyword insto)
                          (let [avg-subopt (subopt-robustness (str fdir insto) n) ;list-of-lists average subopt overlap of 1-mut structures

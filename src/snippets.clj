@@ -331,7 +331,7 @@
                           iseq))))))))
 
 (defn Z
-  "Calculates the partition function for a structure (from sequence
+  "Calculates the partition function for a structure (from sequences
   S) from i (starts at 0) to j. Currently assume homopolymer (any base
   can bind an y other base). Energy function = 1 to count structures
   but needs to be changed to actual energies.
@@ -498,6 +498,9 @@
 
 ;;create charts using highcharts
 
+(defn most-likely-ancestor
+  "take a vector of strings and finds the consensus sequence by
+  choosing the most common base at a position."
 
 (let [s "AUGCUAGUACGGAU"
       n (count s)
