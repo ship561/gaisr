@@ -52,8 +52,8 @@
    true, only returns sequences which fold into identical structures
    else returns the first n sequences. Returns a list of sequences."
   
-  [target n & {:keys [perfect?]
-               :or {perfect? true}}]
+  [target n & {:keys [perfect? ncore]
+               :or {perfect? false ncore 2}}]
   (let [inv-fold (fn [target n perfect?]
                    (->> (map (fn [[s ensemble]]
                                (if perfect?
@@ -77,8 +77,9 @@
                   (if (< c n)    
                     (recur (count cand) ;distinct candidate seqs
                            ;;add current list to newly generated ones
-                           #_(distinct (apply concat cand (pmap (fn [_] (inv-fold target (min 10 (quot n 2)) perfect?)) (range 2))))
-                           (distinct (concat cand (inv-fold target n perfect?)))) 
+                           (->> (pmap (fn [_] (inv-fold target (min 10 (quot n ncore)) perfect?)) (range ncore))
+                                (apply concat cand )
+                                distinct))
                     (take n cand)))] 
     inv-seq))
 
@@ -322,9 +323,10 @@
    %overlap-between-cons-and-suboptimal-structure for each sequence (cons wt
    muts)"
 
-  [sto n & {:keys [ncore]
-            :or {ncore 5}}]
-  (let [;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
+  [sto n & {:keys [ncore nsubopt]
+            :or {ncore 5
+                 nsubopt 1000}}]
+  (let [ ;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
         inv-sto (str (str/butlast 3 sto) "inv.clj")
         {l :seqs cons :cons} (read-sto sto :with-names true)
         cons (change-parens (first cons))
@@ -335,15 +337,14 @@
                   inv-seq (create-inv-seqs nm st n inv-sto) ;vector of n inverse-folded seqs
                   cons-keys (set (keys (struct->matrix st)))
                   neut (map (fn [x]
-                              (subopt-overlap-neighbors x cons-keys :ncore ncore :nsubopt 1000))
+                              (subopt-overlap-neighbors x cons-keys :ncore ncore :nsubopt nsubopt))
                             (concat (list s) inv-seq))]
               ;;average %overlap for each wt and mut
               (map (fn [x]
-                     (->> x ;mut composed of 1000 subopt structs
+                     (->> x       ;mut composed of 1000 subopt structs
                           (apply merge-with +) ;merge %overlap freqmap
-                                        ;for mut 
-                          mean
-                          double))
+                                        ;for wt and mut 
+                          mean))
                    neut)))
           l)]))
 
@@ -505,7 +506,7 @@
                                 (fs/listdir fdir))
                         (partition-all 2 ) ;group into manageable chuncks
                         (take 1))]
-      ([let cur (doall
+      (let [cur (doall
                  (map (fn [insto]
                         [(keyword insto)
                          (let [avg-subopt (subopt-robustness (str fdir insto) n) ;list-of-lists average subopt overlap of 1-mut structures

@@ -37,23 +37,16 @@
    tools, but now may branch out to many others."
 
   (:require [clojure.contrib.string :as str]
-            [clojure.contrib.str-utils :as stru]
-            [clojure.set :as set]
-            [clojure.contrib.seq :as seq]
-            [clojure.zip :as zip]
             [clojure.contrib.io :as io]
             [clojure-csv.core :as csv]
-            [clj-shell.shell :as sh]
             [edu.bc.fs :as fs])
   (:use clojure.contrib.math
         edu.bc.utils
         edu.bc.utils.probs-stats
         [edu.bc.bio.seq-utils :only [norm-elements degap-seqs]]
         edu.bc.bio.sequtils.files
-        [clojure.contrib.condition
-         :only (raise handler-case *condition* print-stack-trace)]
-        [clojure.contrib.pprint
-         :only (cl-format compile-format)]
+        [clojure.pprint
+         :only [cl-format]]
         ))
 
 
@@ -363,6 +356,61 @@
       (fs/rm (str outfile ".bak.clstr")))
     (when (coll? input) (fs/rm infile))
     outfile))
+
+
+
+
+;;; ----------------------------------------------------------------------
+;;;
+;;; OK, here we have an effort to map EMBL seq/ids to refseq ids.  In
+;;; particular, we turn embl tagged stos into nc tagged stos.  So, for
+;;; example, RFAM stos can become "refseqed".
+
+
+(defn get-embl-blast-candidates
+  [blast-output-file]
+  (reduce
+   (fn[m x]
+     (let [embl-entry (first x)
+           nc-nm (->> (nth x 4) (str/split #"\|") last
+                      (re-find #"^[A-Za-z_0-9]+"))
+           ev (Double. (nth x 3))]
+       (if (and (= (second x) "1")
+                ;; somewhat arbitrary, but real examples should
+                ;; have very low evalues
+                (< ev 1e-05))
+         (let [s (Integer. (nth x 5))
+               e (Integer. (nth x 6))
+               [s e sd] (if (> s e) [e s -1] [s e 1])
+               entry (str nc-nm "/" s "-" e "/" sd)]
+           (assoc m embl-entry (conj (get m embl-entry []) entry)))
+         m)))
+   {} (butlast (csv/parse-csv (slurp blast-output-file)))))
+
+
+(defn embl-sto->nc-sto [stoin & {:keys [blastout]}]
+  (let [fna (fs/replace-type stoin ".fna")
+        ncsto (fs/replace-type stoin "-NC.sto")
+        misc (str "-perc_identity 100.0")
+        _ (sto->fna stoin fna)
+        blastout (or blastout (blast :blastn fna :strand :both :misc misc))
+        embl-aln-pairs (->> stoin (#(read-seqs % :info :both)) (into {}))
+        nc-aln-pairs (reduce
+                      (fn[V [id v]]
+                        (conj V [(rand-nth v) (embl-aln-pairs id)]))
+                      [] (get-embl-blast-candidates blastout))
+        [sqs-gcs hdgf-lines] (sto-GC-and-seq-lines stoin)
+        gc-lines (filter #(.startsWith % "#") sqs-gcs)]
+    (io/with-out-writer ncsto
+      (println (first hdgf-lines))
+      (println (second hdgf-lines) "\n")
+      (doseq [l (drop 2 hdgf-lines)] (println l))
+      (println "\n")
+      (doseq [[nc sq] nc-aln-pairs] (cl-format true "~A~40T~A~%" nc sq))
+      (doseq [gcline gc-lines]
+        (let [[gc kind v] (str/split #"\s+" 3 gcline)]
+          (cl-format true "~A~40T~A~%" (str gc " " kind) v)))
+      (println "//"))))
 
 
 

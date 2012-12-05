@@ -44,11 +44,8 @@
             [edu.bc.fs :as fs])
 
   (:use edu.bc.utils
-        [clojure.contrib.condition
-         :only [raise handler-case *condition*
-                print-stack-trace stack-trace-info]]
-        [clojure.contrib.pprint
-         :only (cl-format compile-format)]))
+        [clojure.pprint
+         :only [cl-format]]))
 
 
 ;;; -----------------------------------------------------------------
@@ -561,6 +558,9 @@
 
 
 
+(def ^{:doc "Default log function for entropy" :dynamic true}
+     *logfn* log2)
+
 (defn shannon-entropy
   "Returns the Shannon entropy of a sequence: -sum(* pi (log pi)),
    where i ranges over the unique elements of S and pi is the
@@ -605,7 +605,7 @@
   ([combinator sym? coll1 coll2]
      (entropy (joint-probability combinator sym? coll1 coll2)))
   ([combinator sym? coll1 coll2 & colls]
-     (entropy (apply joint-probability combinator sym? coll1 coll2 colls))))
+     (entropy (apply joint-probability combinator sym? colls))))
 
 (defn HXY
   "Synonym for joint-entropy"

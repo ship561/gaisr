@@ -40,12 +40,10 @@
    future."
 
   (:require [clojure.contrib.string :as str]
-            [clojure.contrib.str-utils :as stru]
             [clojure.set :as set]
-            [clojure.contrib.seq :as seq]
-            [clojure.zip :as zip]
             [clojure.contrib.io :as io]
-            [clj-shell.shell :as sh]
+            [incanter.core]
+            [incanter.charts]
             [edu.bc.fs :as fs])
   (:use clojure.contrib.math
         edu.bc.utils
@@ -53,10 +51,8 @@
         edu.bc.bio.seq-utils
         edu.bc.bio.sequtils.files
         edu.bc.bio.sequtils.info-theory
-        [clojure.contrib.condition
-         :only (raise handler-case *condition* print-stack-trace)]
-        [clojure.contrib.pprint
-         :only (cl-format compile-format)]
+        [clojure.pprint
+         :only [cl-format]]
         ))
 
 
@@ -391,28 +387,7 @@
 
 (comment
 
-(def l-1 (probs 3 "CAAAAAGAAAUAGUAGGGCUUUUGAAAGUAACGGCCGCCCUGCAAAGAGCGGCCGUUCGCCUUACGUUUUUUA"))
-
-(def l-2 (probs 2 "CAAAAAGAAAUAGUAGGGCUUUUGAAAGUAACGGCCGCCCUGCAAAGAGCGGCCGUUCGCCUUACGUUUUUUA"))
-
-(for [x (keys l-1) a "AGUC"]
-  (str x a))
-
-(reduce (fn[m lmer]
-          (let [l (dec (count lmer))
-                x (subs lmer 1)
-                y (subs lmer 0 l)
-                z (subs lmer 1 l)]
-            (if (and (l-1 x) (l-1 y) (l-2 z))
-              (assoc m lmer (/ (* (l-1 x) (l-1 y)) (l-2 z)))
-              m)))
-        {} *1)
-
-(jensen-shannon
- *1 (probs 4 "CAAAAAGAAAUAGUAGGGCUUUUGAAAGUAACGGCCGCCCUGCAAAGAGCGGCCGUUCGCCUUACGUUUUUUA"))
-
-)
-
+;;;--------- REFACTOR - The following needs to go into info-theory or ??? ;;;
 
 (defn expected-qdict [q-1 q-2 & {:keys [alpha] :or {alpha (alphabet :rna)}}]
   (reduce (fn[m lmer]
@@ -554,32 +529,6 @@
 ;;; (/ 4683023485 57253960.0)
 ;;; (/ 7512557802 57253960.0)
 
-#_(def *sto-hybrid-s4-0712*
-     (let [l 7
-           name-seqs (->> "/home/jsa/Bio/STOfiles/S15stos/FreqDicts/S4_0712.sto.S10regionprots.fna.cmsearch.csv" edu.bc.bio.gaisr.post-db-csv/get-entries
-                          (keep (fn[[nm s e & _]]
-                                  (when (fs/exists? (fs/join default-genome-fasta-dir (str nm ".fna")))
-                                    (str nm "/" (if (> (Integer. s) (Integer. e)) (str e "-" s "/-1") (str s "-" e "/1"))))))
-                          (pxmap gen-name-seq 10))
-           names (map first name-seqs)
-           sqs (map second name-seqs)
-           sqs-hd (hybrid-dictionary l sqs :par 10)
-           refsqs (->> (read-seqs "/home/jsa/Bio/STOfiles/S15stos/FreqDicts/S4_0712.sto") degap-seqs)
-           sto-hd (hybrid-dictionary l refsqs :par 10)
-           dicts (pxmap #(probs l %) 10 sqs)
-           ;;sqsds (sort (pxmap #(DX||Y % sqs-hd) 10 dicts))
-           stods (pxmap #(DX||Y % sto-hd) 10 dicts)
-           nms-stods (sort-by second (map (fn[nm d] [nm d]) names stods))
-           xs (range (count sqs))
-           chart (incanter.charts/scatter-plot
-                  xs (map second nms-stods)
-                  :x-label "Sequence"
-                  :y-label "RE to Hybrid"
-                  :title (str "Sto to Hybrid, Resolution: " l))
-           ;;chart (incanter.charts/add-points chart xs sqsds)
-           ]
-       (incanter.core/view chart)
-       nms-stods))
 
 (defn cre-vals
   [sqs & {:keys [limit alpha selectfn]
@@ -588,10 +537,12 @@
   (if (string? sqs)
     (for [l (range 3 (inc limit))]
       [l (CREl l sqs :alpha alpha) (count sqs)])
-    (let [sqs (selectfn sqs)]
-      (for [sq sqs
-            l (range 3 (inc limit))]
-        [l (CREl l sq :alpha alpha) (count sq)]))))
+    (let [sqs (selectfn sqs)
+          d (- (inc limit) 3)]
+      (partition-all
+       d (for [sq sqs
+               l (range 3 (inc limit))]
+           [l (CREl l sq :alpha alpha) (count sq)])))))
 
 (defn ctx-seq
   [entry & {:keys [ldelta rdelta delta]}]
@@ -601,8 +552,8 @@
     (gen-name-seq entry :ldelta ldelta :rdelta rdelta)))
 
 (defn get-entries
-  [filespec]
-  #_(let [fspec (fs/fullpath filespec)
+  [filespec & [seqs]]
+  (let [fspec (fs/fullpath filespec)
         ftype (fs/ftype fspec)]
     (if (not= ftype "csv")
       (read-seqs filespec :info :name)
@@ -613,10 +564,11 @@
                      (str nm "/"
                           (if (> (Integer. s) (Integer. e))
                             (str e "-" s "/-1")
-                            (str s "-" e "/1"))))))))))
+                            (str s "-" e "/1"))))))
+           (#(if seqs (map second (gen-name-seq-pairs %)) %))))))
 
 (defn cre-samples
-  [seqs & {:keys [alpha directed ldelta rdelta delta cnt limit par]
+  [seqs & {:keys [alpha xlate directed ldelta rdelta delta cnt limit par]
            :or {alpha (alphabet :rna)
                 directed true cnt 5 limit 14 par 10}}]
   {:pre [(or delta (and (not directed) ldelta rdelta))]}
@@ -635,7 +587,8 @@
     (partition-all
      d (for [x (range 1 (inc cnt))
              sq [(rand-nth name-seq-pairs)]
-             l (range 3 (inc limit))]
+             l (range 3 (inc limit))
+             :let [sq (if xlate (seqXlate sq :xmap xlate) sq)]]
          [l (CREl l (second sq) :alpha alpha)
           (-> sq second count) (first sq)]))))
 
@@ -655,43 +608,91 @@
 
 
 (defn sto-re-dists
-  [l csv-file sto-file & {:keys [refn delta par]
-                          :or {refn DX||Y delta 5000 par 10}}]
-  (let [csv (fs/fullpath csv-file)
-        prot-name (->> csv
+  [l candidate-file sto-file & {:keys [refn delta order xlate par]
+                                :or {refn DX||Y delta 5000 order :down par 10}}]
+  (let [comp (if (= order :up) < >)
+        cfile (fs/fullpath candidate-file)
+        ctype (fs/ftype cfile)
+        prot-name (->> cfile
                        (str/split #"/") last (str/split #"\.") first
                        (str/replace-re #"_" " "))
-        entries (get-entries csv)
-        name-seqs (pxmap #(let [+? (= 1 (->> % (pos \-) count))
+        entries (get-entries cfile)
+
+        name-seqs (if (= 0 delta)
+                    (map (fn[e sq] [e sq])
+                         entries
+                         (->> (if (= ctype "csv")
+                                (get-entries cfile :seqs)
+                                (read-seqs cfile))
+                              norm-elements degap-seqs))
+                    (pxmap #(let [+? (= 1 (->> % (pos \-) count))
                                 ldel (if +? 100 delta)
                                 rdel (if +? delta 100)]
                             (gen-name-seq % :ldelta ldel :rdelta rdel))
-                         par entries)
+                         par entries))
         sqs (map second name-seqs)
-        refsqs (->> (get-entries sto-file)
-                    (pxmap #(let [+? (= 1 (->> % (pos \-) count))
-                                  ldel (if +? 100 delta)
-                                  rdel (if +? delta 100)]
-                              (gen-name-seq % :ldelta ldel :rdelta rdel))
-                           par)
-                    (map second))
+        sqs (if xlate (seqXlate sqs :xmap xlate) sqs)
+
+        refsqs (->> (if (= 0 delta)
+                      (map (fn[[e sq]]
+                             (let [sq (->> sq norm-elements degap-seqs)]
+                               [e sq]))
+                           (read-seqs sto-file :info :both))
+                      (->> sto-file
+                           get-entries
+                           (pxmap #(let [+? (= 1 (->> % (pos \-) count))
+                                         ldel (if +? 100 delta)
+                                         rdel (if +? delta 100)]
+                                     (gen-name-seq % :ldelta ldel :rdelta rdel))
+                                  par)))
+                    (map second)
+                    (#(if xlate (seqXlate % :xmap xlate) %)))
+
         sto-hd (hybrid-dictionary l refsqs :par par)
         dicts (pxmap #(probs l %) par sqs)
         stods (pxmap #(refn % sto-hd) par dicts)]
-    [(sort-by second > (map (fn[en d] [en d]) entries stods))
+
+    [(sort-by second comp (set (map (fn[en d] [en d]) entries stods)))
      prot-name
      (count sqs)]))
 
+
 (defn select-cutpoint
-  [re-points & {:keys [area] :or {area 7/10}}]
+  [re-points & {:keys [area ends] :or {area 7/10}}]
   (let [s (* (sum re-points) area)]
-    (reduce (fn[[x v] re]
-              (if (< v s) [(inc x) (+ v re)] [x v]))
-            [0 0]
-            re-points)))
+    (if (= ends :both)
+      (reducem + #(cond (number? %1) [2 (+ %1 %2)]
+                        (> (second %1) s) %1
+                        :else [(inc (first %1)) (+ (second %1) %2)])
+               :|| re-points (reverse re-points))
+      (reduce (fn[[x v] re]
+                (if (< v s) [(inc x) (+ v re)] [x v]))
+              [0 0]
+              re-points))))
+
+(defn get-good-candidates
+  [nm-re-coll cutpoint & {:keys [ends] :or {ends :low}}]
+  (let [total (count nm-re-coll)
+        [good bad] (cond
+                    (= ends :low)
+                    [(take cutpoint nm-re-coll)
+                     (drop cutpoint nm-re-coll)]
+
+                    (= ends :high)
+                    [(drop (- total cutpoint) nm-re-coll)
+                     (take (- total cutpoint) nm-re-coll)]
+
+                    :else ; :both
+                    [(concat
+                      (take cutpoint nm-re-coll)
+                      (drop (- total cutpoint) nm-re-coll))
+                     (take (- total cutpoint cutpoint)
+                           (drop cutpoint nm-re-coll))])]
+    [good bad]))
+
 
 (defn selection-perf
-  [nm-re-coll ent-file cutpoint]
+  [nm-re-coll ent-file cutpoint & {:keys [ends good] :or {ends :low}}]
    (let [candidates (->> (io/read-lines ent-file)
                          (map entry-parts)
                          (map (fn[[nm [s e] sd]]
@@ -701,59 +702,312 @@
                              (assoc m k (inc (get m k 0))))
                            {} candidates)
          picked (count human-picked)
-         good (into {} (take cutpoint nm-re-coll))
+
+         good  (if good
+                 good
+                 (-> (get-good-candidates nm-re-coll cutpoint :ends ends)
+                     first))
+         good-size (count good)
+
          true+ (count (reduce (fn[m [k v]]
                                 (if (get human-picked k)
                                   (assoc m k v) m))
                               {} good))
-         false+ (- cutpoint true+)
-         bad (into {} (drop cutpoint nm-re-coll))
+         false+ (- good-size true+)
          false- (- picked true+)]
      [:total total
+      :cutpoint cutpoint
+      :goodsize good-size
       :true+ true+
       :true+picked (float (/ true+ picked))
-      :true+cutpoint (float (/ true+ cutpoint))
+      :goodtrue+ (float (/ true+ good-size))
       :false+ false+
       :false- false-
       :false-picked (float (/ false- picked))
       :picked picked
       :dups (filter (fn[[k v]] (> v 1)) human-picked)]))
 
+
 (defn plot-sto-dists
-  [prot-name cnt-seqs res cutpt nms-stods]
+  [prot-name cnt-seqs ctx-delta res cutpt nms-stods]
   (let [xs (range cnt-seqs)
         chart (incanter.charts/scatter-plot
                xs (map second nms-stods)
                :x-label "Sequence"
                :y-label "Sq RE to Hybrid"
-               :title (str prot-name " search sqs to Sto Hybrid"
-                           " Resolution: " res ", Cutpt: " cutpt)
+               :title (str prot-name " Sq RE to Sto Hybrid."
+                           " Ctx Sz: " ctx-delta
+                           " Res: " res ", Cutpt: " cutpt)
                :series-label "sq/hbrid-distance"
                :legend true)]
     (incanter.core/view chart)))
 
 
 (defn compute-candidate-info
+  ""
   [sto-file candidate-file delta cutoff
-   & {:keys [refn cmp-ents plot-cre plot-dists] :or {refn DX||Y}}]
-  (let [cres (cre-samples sto-file :delta 1800 :cnt 3)
-        res (reduce (fn[res v]
-                      (/ (+ res
-                            (some #(when (< (second %) 0.01) (first %)) v))
-                         2.0))
-                    0.0 cres)
+   & {:keys [refn xlate alpha crecut limit res order ends
+             plot-cre plot-dists]
+      :or {refn DX||Y alpha (alphabet :rna) crecut 0.10 limit 15
+           order :up :ends :low}}]
+
+  (let [cres (when (not res)
+               (cre-samples sto-file :delta delta
+                            :xlate xlate :alpha alpha :limit limit :cnt 3))
+        res (if res
+              res
+              (reduce (fn[res v]
+                        (/ (+ res
+                              (some #(when (< (second %) crecut) (first %)) v))
+                           2.0))
+                      0.0 cres))
         res (if res (Math/ceil res) (-> cres first last first))
-        [ent-ds nm sz] (sto-re-dists res candidate-file sto-file
-                                     :refn refn :delta delta)
-        cutpt (first (select-cutpoint (map second ent-ds) :area cutoff))
-        perf-stats (when cmp-ents (selection-perf ent-ds cmp-ents cutpt))]
+        [nm-re-sq pnm sz] (sto-re-dists res candidate-file sto-file
+                                        :refn refn :xlate xlate
+                                        :delta delta :order order)
+        cutpt (first (select-cutpoint (map second nm-re-sq)
+                                      :area cutoff :ends ends))
+        [good bad] (get-good-candidates nm-re-sq cutpt :ends ends)]
     (when plot-cre (plot-cres cres))
-    (when plot-dists (plot-sto-dists nm sz res cutpt ent-ds))
-    [(take cutpt ent-ds) (butlast perf-stats)]))
+    (when plot-dists (plot-sto-dists pnm sz delta res cutpt nm-re-sq))
+    [good bad cutpt nm-re-sq]))
+
+
+(defn compute-candidate-sets
+  ""
+  [sto-file candidate-file first-phase-entry-file final-entry-file delta
+   & {:keys [refn xlate alpha crecut limit
+             res order ends hit-cutoff cutoff
+             cmp-ents plot-cre plot-dists]
+      :or {refn DX||Y alpha (alphabet :rna) crecut 0.10
+           limit 15 order :up :ends :low hit-cutoff 40/100 cutoff 19/100}}]
+
+  (let [final-entry-file (fs/fullpath final-entry-file)
+        final-bad-entry-file (fs/replace-type
+                              final-entry-file
+                              (str "-bad." (fs/ftype final-entry-file)))
+        [rna-only-good
+         rna-only-bad
+         cutpt1
+         nm-re-sq] (compute-candidate-info
+                    sto-file candidate-file 0 hit-cutoff
+                    :refn refn :xlate +RY-XLATE+ :alpha alpha
+                    :limit limit :res 6 :order order :ends ends
+                    :plot-cre plot-cre :plot-dists plot-dists)
+        rna-only-perf-stats (when cmp-ents
+                              (selection-perf
+                               nm-re-sq cmp-ents cutpt1
+                               :ends ends :good rna-only-good))
+        _ (->> rna-only-good (map first)
+               (#(gen-entry-file % first-phase-entry-file)))
+
+        [good bad
+         cutpt2
+         nm-re-sq] (compute-candidate-info
+                    sto-file first-phase-entry-file delta cutoff
+                    :refn refn :xlate xlate :alpha alpha
+                    :crecut crecut :limit limit :order order :ends ends
+                    :plot-cre plot-cre :plot-dists plot-dists)
+        perf-stats (when cmp-ents
+                     (selection-perf
+                      nm-re-sq cmp-ents cutpt2 :ends ends :good good))]
+
+    (->> good (#(gen-entry-nv-file % final-entry-file)))
+    (->> bad (#(gen-entry-nv-file % final-bad-entry-file)))
+    [[good bad cutpt2] [rna-only-good rna-only-bad cutpt1]]))
+
+
+
+(defn hit-context-delta [sto & {:keys [gene cnt margin]
+                                :or {cnt 5 margin 0}}]
+  {:pre [(string? gene)]}
+  (let [sample (random-subset (read-seqs sto :info :name) cnt)
+        nms-loci (map #(let [[nm [s e] sd] (entry-parts %)] [nm s e sd]) sample)
+        features (map (fn[[nm s e sd]]
+                        [[nm s e sd]
+                         (edu.bc.bio.gaisr.db-actions/hit-features-query
+                          nm s e)])
+                      nms-loci)
+        nms-lens
+        (->> features
+             (map (fn[[[nm s e sd :as entry] ctx]]
+                    [entry
+                     (ffirst
+                      (keep (fn[m]
+                              (let [nvs (m :nvs)
+                                    x (keep #(when (and (= (% :name) "gene")
+                                                        (= (% :value) gene))
+                                               ;; -1 sd => hit end - ctx start
+                                               ;;  1 sd => ctx end - hit start
+                                               (let [{cs :start
+                                                      ce :end
+                                                      csd :strand}
+                                                     (first (m :locs))
+                                                     len (inc (if (= 1 csd)
+                                                                (- ce s)
+                                                                (- e cs)))]
+                                               [len %]))
+                                            nvs)]
+                                (when (and (in (m :sftype) ["CDS" "gene"])
+                                           (seq x))
+                                  (first x))))
+                            ctx))]))
+             (filter second))
+        base (+ margin
+                (if (not (seq nms-lens))
+                  (hit-context-delta sto :gene gene :cnt cnt)
+                  (reduce (fn[sz [nm s]]
+                            (first (div (+ sz s) 2)))
+                          (-> nms-lens first second) (rest nms-lens))))]
+    (* (floor (+ (/ base 100) 1)) 100)))
+
+
+
 
 
 
 (comment
+
+(def jsa
+     (compute-candidate-info
+     "/home/jsa/Bio/FreqDicts/New/L20-4-101512.sto"
+     "/home/jsa/Bio/FreqDicts/New/L20-4-101512.sto.Assortprot1.fna.cmsearch.csv"
+      0 40/100
+      :cmp-ents "/home/jsa/Bio/FreqDicts/New/L20-5-101612.ent"
+      :refn DX||Y :res 6 :xlate +RY-XLATE+
+      :order :up :ends :low
+      :plot-cre false :plot-dists true))
+(->> (first jsa)
+     (map first)
+     (#(gen-entry-file % "/home/jsa/Bio/FreqDicts/New/L20-trial.ent")))
+(def jsa
+     (compute-candidate-info
+      "/home/jsa/Bio/FreqDicts/New/L20-4-101512.sto"
+      "/home/jsa/Bio/FreqDicts/New/L20-trial.ent"
+      900 100/100
+      :cmp-ents "/home/jsa/Bio/FreqDicts/New/L20-5-101612.ent"
+      :refn DX||Y :res 10 :xlate +RY-XLATE+
+      :order :up :ends :low
+      :plot-cre false :plot-dists true))
+(third jsa)
+(count
+ (set/intersection
+  (->> (first jsa)
+       (map (fn[[e entropy]]
+              [e entropy (->> e entry-parts second (#(abs (apply - %))))]))
+       (map first) (take 150)
+       ;;(#(gen-entry-file % "/home/jsa/Bio/FreqDicts/New/L20-test.ent")))
+       set)
+  (set (get-entries "/home/jsa/Bio/FreqDicts/New/L20-5-101612.ent"))))
+
+
+(def jsa
+     (compute-candidate-info
+      "/home/jsa/Bio/FreqDicts/S4_0712.sto"
+      "/home/jsa/Bio/FreqDicts/S4_0712comb2.ent"
+      0 40/100
+      :cmp-ents "/home/jsa/Bio/FreqDicts/S4_072612-final.ent"
+      :refn DX||Y :res 6 :xlate +RY-XLATE+
+      :order :up :ends :low
+      :plot-cre false :plot-dists true))
+
+(->> (first jsa)
+     (map first)
+     (#(gen-entry-file % "/home/jsa/Bio/FreqDicts/trial.ent")))
+
+
+(count
+ (set/intersection
+  (->> (first jsa)
+       (map (fn[[e entropy]]
+              [e entropy (->> e entry-parts second (#(abs (apply - %))))]))
+       (map first) (take 2) last)
+       set)
+ (set (get-entries "/home/jsa/Bio/FreqDicts/S4_072612-final.ent")))
+
+
+(->> (read-seqs "/home/jsa/Bio/FreqDicts/S4_0712comb.ent" :info :name)
+     (map (fn[e] [e entropy
+                  (->> e entry-parts second
+                       (#(abs (apply - %))))]))
+     (filter #(> (third %) 70)) count)
+
+
+(->> (first S4-2-2ltr)
+     (map (fn[[e entropy]]
+            [e entropy (->> e entry-parts second (#(abs (apply - %))))]))
+     (filter #(> (third %) 70))
+     (reduce (fn[m [entry entropy len]]
+               (let [[nm [s e] sd] (entry-parts entry)
+                     [x y l :as all] (m nm)]
+                 (if (or (not all) (< l len))
+                   (assoc m nm [entry entropy len])
+                   m)))
+             {})
+     vals (sort-by second <)
+     (map first) (take 20)
+     (#(gen-entry-file % "/home/jsa/Bio/FreqDicts/outexample.ent")))
+
+
+(count (set/intersection
+        (->> (first S4-1-2ltr)
+             (map (fn[[e entropy]]
+                    [e entropy
+                     (->> e entry-parts second
+                          (#(abs (apply - %))))]))
+             (filter #(> (third %) 70))
+             (map first) (take 363) set)
+        (set (get-entries "/home/jsa/Bio/FreqDicts/S4_072612-final.ent"))))
+
+
+;;; Correct version...
+(->> (map #(reduce (fn[m e]
+                     (let [nm (first (entry-parts e))]
+                       (assoc m nm (conj (get m nm #{}) e))))
+                   {} (get-entries %))
+  ["/home/jsa/Bio/FreqDicts/S4_0712.sto.S10regionprots.fna.cmsearch.csv"
+   "/home/jsa/Bio/FreqDicts/S4_0712b.sto.S10regionprots.fna.cmsearch.csv"])
+     (#(let [bnms (vals (second %))
+             abad (apply dissoc (first %) bnms)]
+         (apply dissoc (first %) (vals abad))))
+     (reduce (fn[m [k v]]
+               (assoc m k (first
+                           (reduce (fn[x ent]
+                                     (let [[nm [s e] sd] (entry-parts ent)
+                                           l (abs (- e s))
+                                           [xent len] (if x x ["" 0])]
+                                       (if (< len l) [ent l] x)))
+                                   nil v))))
+             {})
+     vals (#(gen-entry-file % "/home/jsa/Bio/FreqDicts/S4_0712comb2.ent")))
+
+
+
+(let [sets (map #(reduce (fn[m e]
+                           (let [nm (first (entry-parts e))]
+                             (assoc m nm (conj (get m nm #{}) e))))
+                         {} (get-entries %))
+      ["/home/jsa/Bio/FreqDicts/S4_0712.sto.S10regionprots.fna.cmsearch.csv"
+       "/home/jsa/Bio/FreqDicts/S4_0712b.sto.S10regionprots.fna.cmsearch.csv"])]
+  (->> (reduce (fn[m [k v]]
+                 (if (m k) (assoc m k (set/union (m k) v)) m))
+               (first sets)
+               (second sets))
+       vals (apply set/union)
+       (map (fn[e]
+              [e (->> e entry-parts second (#(abs (apply - %))))]))
+       vec (reduce (fn[m [entry len]]
+                     (let [[nm [s e] sd] (entry-parts entry)
+                           [x l :as all] (m nm)]
+                       (if (or (not all) (< l len))
+                         (assoc m nm [entry len])
+                         m)))
+                   {})
+       vals (sort-by second <)
+       (map first)
+       (#(gen-entry-file % "/home/jsa/Bio/FreqDicts/S4_0712comb2.ent"))))
+
+
 (def s4-candidates
      (compute-candidate-info
       "/home/jsa/Bio/FreqDicts/S4_0712.sto"
@@ -839,40 +1093,3 @@
                                 [(take 5 sq) (drop (- (count sq) 5) sq)])))])
         count-maps))
 
-
-#_(doseq [cres (map #(pxmap (fn[k] [k (CREl k %) (count %)]) 4 (range 3 16))
-                  (->> "/home/jsa/Bio/STOfiles/S15stos/FreqDicts/S4_0712.sto.S10regionprots.fna.cmsearch.csv"
-                       edu.bc.bio.gaisr.post-db-csv/get-entries
-                       (keep (fn[[nm s e & _]]
-                               (when (fs/exists? (fs/join default-genome-fasta-dir (str nm ".fna")))
-                                 (str nm "/" (if (> (Integer. s) (Integer. e)) (str e "-" s "/-1") (str s "-" e "/1"))))))
-                       gen-name-seq-pairs
-                       (map second)
-                       (take 7)))]
-  (let [ks (map first cres)
-        cnt (third (first cres))
-        cres (map second cres)
-        Fmax (round (ln cnt))]
-    (incanter.core/view
-     (incanter.charts/scatter-plot
-      ks cres
-      :x-label "feature length"
-      :y-label "Commulative Relative Entropy"
-      :title (str "CRE(l, F/F^), len: " cnt
-                  " Fmax: " Fmax)))))
-
-
-#_(doseq [cres (map #(pxmap (fn[k] [k (CREl k %) (count %)]) 4 (range 3 16)) jsa)]
-  (let [ks (map first cres)
-        cnt (third (first cres))
-        cres (map second cres)
-        Fmax (round (ln cnt))]
-    (incanter.core/save
-     (incanter.charts/scatter-plot
-      ks cres
-      :x-label "feature length"
-      :y-label "Commulative Relative Entropy"
-      :title (str "CRE(l, F/F^), len: " cnt
-                  " Fmax: " Fmax))
-     (fs/join "/home/jsa/Bio/MetaGenome/Charts"
-              (str "CREl-" cnt "-fmax-" Fmax ".png")))))
