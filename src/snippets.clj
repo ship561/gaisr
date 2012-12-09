@@ -530,3 +530,28 @@
           :when (< (+ j i) n)]
     (swap! ztable #(assoc % [j (+ i j)] (Z j (+ i j) s))))
   (Z 0 5 s) @ztable)
+
+
+
+
+(deref (future #((fn [n target] (sh "RNAinverse"
+                                   "-Fmp"
+                                   (str "-R" n)
+                                   "-P" "/usr/local/ViennaRNA-2.0.0/rna_andronescu2007.par"
+                                   :in target)) 2 "((...))")) 10 :error)
+
+
+(defn future-timeout [f timeout-in-s]
+  (.get f timeout-in-s (java.util.concurrent.TimeUnit/SECONDS)))
+
+(.get (future #((fn [n target] (sh "RNAinverse"
+                                            "-Fmp"
+                                            (str "-R" n)
+                                            "-P" "/usr/local/ViennaRNA-2.0.0/rna_andronescu2007.par"
+                                            :in target)) 2 "((...))")) 10 (java.util.concurrent.TimeUnit/SECONDS))
+
+(deref (future-call #((fn [n target] (sh "RNAinverse"
+                                        "-Fmp"
+                                        (str "-R" n)
+                                        "-P" "/usr/local/ViennaRNA-2.0.0/rna_andronescu2007.par"
+                                        :in target)) 2 "((...))")) 1000 :error)

@@ -4,23 +4,15 @@
             [incanter.stats :as stats]
             [incanter.core :as math]
             [clojure.set :as set]
-            [simplesvm :as ssvm]
             [clojure.java.shell :as shell])
-  (:use [clojure.contrib.condition
-         :only [raise handler-case *condition*
-                print-stack-trace stack-trace-info]]
-
-        [clojure.contrib.pprint
-         :only (cl-format compile-format)]
-
-        net.n01se.clojure-jna
+  (:use [clojure.pprint :only (cl-format)]
         refold
         libsvm2weka
         edu.bc.bio.sequtils.files
         [edu.bc.bio.sequtils.snippets-files
-         :only (read-sto change-parens)]
+         :only (read-sto change-parens profile)]
         edu.bc.utils
-        [robustness :only (subopt-overlap-sto)]
+        [robustness :only (subopt-overlap-sto avg-overlap)]
         ))
 
 (def possible_pairs {"AU" 1 "UA" 1 "GC" 1 "CG" 1 "GU" 1 "UG" 1} )
@@ -30,7 +22,7 @@
                 "GA" 1 "GC" 1 "GG" 1 "GU" 1
                 "UA" 1 "UC" 1 "UG" 1 "UU" 1} )
 
-(defn jna-malloc
+#_(defn jna-malloc
   "Create a 'C' level USB buffer of size SIZE.  Returns a pair (as a
    vector): [ptr-to-the-buffer the-buffer] Where ptr-to-the-buffer is
    a JNA/C ptr object and the-buffer is a java.nio.DirectByteBuffer
@@ -45,7 +37,7 @@
     (println i)))
 
 
-(defn energy-of-seq [profile]
+#_(defn energy-of-seq [profile]
   (jna-invoke Void RNA/read_parameter_file "/home/kitia/Desktop/ViennaRNA-2.0.0/rna_andronescu2007.par")
   (jna-invoke Integer RNA/set_ribo_switch 1)
   (jna-invoke Void RNA/update_fold_params)
@@ -77,7 +69,7 @@
                  (re-find #"\-*\d*.\d+" foldout))))
        (profile :seqs)))
 
-(defn energy-of-aliseq [profile]
+#_(defn energy-of-aliseq [profile]
   (jna-invoke Void RNA/read_parameter_file "/home/kitia/Desktop/ViennaRNA-2.0.0/rna_andronescu2007.par")
   (jna-invoke Integer RNA/set_ribo_switch 1)
   (jna-invoke Void RNA/update_alifold_params)
@@ -212,7 +204,7 @@
   (reduce (fn [m [k v]]
             ;;(prn k v (sum freq-map))
             (if (contains? base k)
-              (assoc m k (/ v (sum freq-map)))
+              (assoc m k (double (/ v (sum freq-map))))
               m))
           {} freq-map))
  
@@ -316,25 +308,7 @@
            (/ (- x mean) sdev))
          (energy-of-seq2 profile) mu sdev)))
 
-(defn profile [m]
-  (let [struct (map #(change-parens %) (m :cons))
-        s (m :seqs)
-        freqs (partition 2 (interleave (range (count (first s)))
-                                       (map frequencies
-                                            (apply map vector (map #(rest (str/split #"" %)) s)))))
-        fract-freqs (sort-by key (reduce (fn [l [n freq-map]]
-                                           (assoc l n (fraction-base-b freq-map)))
-                                         {} freqs))
-        q (col->prob (flatten (map #(rest (str/split #"" %)) s)) :gaps true)
-        pairs (map #(refold/make_pair_table %) struct)]
-  {:seqs s
-   :structure struct
-   :fract fract-freqs
-   :background q
-   :pairs pairs
-   :cov (m :cov)
-   :filename (m :file)
-   :length  (count (first s))}))
+
 
 (defn main-file [f]
   (let [m (profile (read-sto f))]
@@ -366,7 +340,7 @@
                             (count (m :seqs)) ","
                             class)))
 
-(defn main-sto
+#_(defn main-sto
   "Takes a sto and the class 0 or 1. Performs the various calculations
    for various features. Prints the resulting feat ure vector to the
    console.
@@ -393,19 +367,21 @@
     (print (sci (energy-of-aliseq2 m) (energy-of-seq2 m)) ",")
     (print (stats/mean (information_only_bp (gutell_calcs/entropy-sto m) (m :pairs))) ",")
     (print (stats/mean (->> (mi (gutell_calcs/mutual_info-sto m)) (into {}) vals)) ",")
-    (print (stats/mean (information_only_bp (reduce (fn [x i]
-                                                      (assoc x i (gutell_calcs/JS (col->prob (->> (transpose (m :seqs))
-                                                                                                  (drop i)
-                                                                                                  first)
-                                                                                             :gaps true) :Q (m :background))))
-                                                    {} (range (m :length))) (m :pairs))) ",")
+    (print (stats/mean (information_only_bp
+                        (reduce (fn [x i]
+                                  (assoc x i (gutell_calcs/JS
+                                              (col->prob (->> (transpose (m :seqs))
+                                                              (drop i)
+                                                              first)
+                                                         :gaps true) :Q (m :background))))
+                                {} (range (m :length))) (m :pairs))) ",")
     (print (let [id (pairwise_identity (m :seqs))]
              (double (/ (apply + (map first id))
                         (apply + (map second id))))) ",")
     (print (count (m :seqs)) ",")
     (print class "\n")))
 
-(defn cur-make-svm-features
+#_(defn cur-make-svm-features
   "Current method to make the train2, train3 csvs. Takes no inputs as
    the program is setup by default. Reads the list of files in
    [pos|neg]/list.txt. Does the calculations for each of the features

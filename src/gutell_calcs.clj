@@ -2,17 +2,14 @@
   (:require [clojure.contrib.string :as str]
             [clojure.contrib.io :as io]
             [incanter.stats :as stats]
-            [clojure.contrib.math :as math]
             [clojure.set :as set]
             [clojure-csv.core :as csv]
-            [clojure.java.shell :as shell]
-            [clojure.contrib.seq :as seq])
-  (:use [consensus_seq :only [profile col->prob]]
-        [edu.bc.bio.sequtils.snippets-files
-         :only (read-sto)]
-        [edu.bc.utils]
-        [edu.bc.bio.sequtils.files]
-        [edu.bc.utils.probs-stats]))
+            [clojure.java.shell :as shell])
+  (:use [edu.bc.bio.sequtils.snippets-files
+         :only (read-sto profile)]
+        edu.bc.utils
+        edu.bc.bio.sequtils.files
+        edu.bc.utils.probs-stats))
 
 
 (defn fractpairs_contain_nogaps
@@ -61,6 +58,7 @@
                 (assoc m i (H (second (nth fract-map i)))))
               {} (range len))
       ))
+
 (defn entropy-sto
   "Finds the entropy of each col of the sto file. Returns a map k=col
    number and v=entropy"
@@ -200,10 +198,10 @@
   (let [len (count (first (profile :seqs)))
         fract-map (profile :fract)
         cov (profile :cov)
-        Mxy (mutual_info profile)
+        Mxy (mutual_info-sto profile)
         Mxyr (relative_mutual_info profile)
         H (entropy profile)
-        Hij (joint_entropy profile)
+        Hij (joint_entropy-sto profile)
         cov->int (fn [i]
                    (cond
                     (nil? cov)
@@ -290,11 +288,11 @@
    map contains {:seqs :cons :file}"
   
   [f n]
-  (let [s (second
-           (seq/separate (fn [x] (= x '("CLUSTAL W (SISSIz 0.1 simulation)"))) 
-                         (partition-by #(= % "CLUSTAL W (SISSIz 0.1 simulation)")
-                                       (str/split-lines
-                                        ((shell/sh "SISSIz" "--rna" "-s" "-n" (str n) f) :out)))))
+  (let [s (-> (group-by (fn [x] (= x '("CLUSTAL W (SISSIz 0.1 simulation)"))) 
+                        (partition-by #(= % "CLUSTAL W (SISSIz 0.1 simulation)")
+                                      (str/split-lines
+                                       ((shell/sh "SISSIz" "--rna" "-s" "-n" (str n) f) :out))))
+              second second)
         recombine-lines (fn [x]
                           (reduce (fn [m l]
                                     (let [[nm sq]
@@ -326,11 +324,11 @@
 
   [stoin n]
   (let [aln (sto->aln stoin (str (subs stoin 0 (- (count stoin) 3)) "aln"))
-        p (profile (read-sto stoin))
-        mi (mutual_info p)
+        p (profile stoin)
+        mi (mutual_info-sto p)
         rand_mi (apply concat (doall
                                (pmap (fn [randa]
-                                       (doall (map #(mutual_info (profile %)) randa)))
+                                       (doall (map #(mutual_info-sto (profile %)) randa)))
                                      (partition-all (/ n 10) (rand_aln aln n)))))]
     (for [k (keys mi)]
       [k (double (/ (count

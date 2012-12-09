@@ -57,52 +57,6 @@
 
 
 
-;;; ----------------------------------------------------------------------
-;;;
-;;; IUPAC (International Union of Pure and Applied Chemistry) codes
-;;; for nucleotides and various "groups" of nucleotides.
-;;;
-
-(def +IUPAC+
-     ^{:doc "These are the codes for \"bases\" used in alignments"}
-     {\A "Adenine"
-      \C "Cytosine"
-      \G "Guanine"
-      \T "Thymine"
-      \U "Uracil"
-      \R "AG"
-      \Y "CUT"
-      \S "GC"
-      \W "AUT"
-      \K "GUT"
-      \M "AC"
-      \B "CGUT"
-      \D "AGUT"
-      \H "ACUT"
-      \V "ACG"
-      \N "any"
-      \. "gap"
-      \- "gap"})
-
-(def +NONSTD-RNA+
-     ^{:doc "These are the codes for all non standard \"bases\" used
-             in alignments"}
-
-     {\T "Thymine"
-      \R "AG"       ; purines
-      \Y "CUT"      ; pyrimidines
-      \S "GC"
-      \W "AUT"
-      \K "GUT"
-      \M "AC"
-      \B "CGUT"
-      \D "AGUT"
-      \H "ACUT"
-      \V "ACG"
-      \N "any"
-      \. "gap"
-      \- "gap"})
-
 
 ;;; ----------------------------------------------------------------------
 ;;;
@@ -385,7 +339,6 @@
                   (read-seqs mg-fa :info :both))]))))
 
 
-(comment
 
 ;;;--------- REFACTOR - The following needs to go into info-theory or ??? ;;;
 
