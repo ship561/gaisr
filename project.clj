@@ -2,6 +2,7 @@
   :description "GAISR - Genomic Analysis Illuminating Structured RNA"
 
   :jvm-opts ["-Xmx2g"]
+  :main invfold
 
   :dependencies [[org.clojure/clojure "1.5.0-beta1"]
                  [mlabs.jars/clojure-contrib "1.2.0-mlab"]
