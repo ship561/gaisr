@@ -3,7 +3,8 @@
   (:require [edu.bc.fs :as fs]
             [clojure.contrib.io :as io]
             [clojure.contrib.string :as str])
-  (:use edu.bc.utils.fold-ops
+  (:use [edu.bc.utils :only (pxmap)]
+        edu.bc.utils.fold-ops
         [edu.bc.bio.sequtils.snippets-files
          :only (read-sto change-parens)]
         refold))
@@ -49,11 +50,10 @@
    each seq in the sto and the timeout in minutes. Returns a vector
    [sto-name status] at to indicate success."
 
-  [insto n timeout-min]
+  [insto n timeout-ms]
   (let [outfile (str (str/butlast 3 insto) "inv.clj")
         {inseqs :seqs cons :cons} (read-sto insto :with-names true)
         cons (change-parens (first cons))
-        timeout-ms (* timeout-min 1000 60)
         f (fn []
             (doall
              (for [[nm s] inseqs]
@@ -67,26 +67,38 @@
       (do (future-cancel fc-g) [insto :cancelled]))))
 
 (defn driver-create-inv
-  "drives the create-inv-sto function by feeding it all the stos of interest - mainly the *.7.sto."
-
-  ([timeout]
-     (driver-create-inv timeout :s))
+  "drives the create-inv-sto function by feeding it all the stos of
+   interest - mainly the *.7.sto. creates nseqs inverse sequences."
   
-  ([timeout units]
+  ([nseqs timeout & {:keys [units ncore]
+                     :or {units :s ncore 1}}]
      (let [fdir (str homedir "/bin/gaisr/trainset2/pos/")
            ofile (str homedir "/bin/gaisr/robustness/subopt-robustness-test2.clj")
            diff (remaining-files ofile)
-           timeout-min (case units
-                             :ms (/ timeout 1000 60)
-                             :s (/ timeout 60)
-                             :min timeout
-                             :hr (* timeout 60))]
-       (for [instos (take 5 diff)
-             insto instos
-             :let [outfile (str fdir (str/butlast 3 insto) "inv.clj")]
-             :when (not (fs/exists? outfile)) ]
-         (do (prn "working on file" insto)
-             (create-inv-sto (str fdir insto) 10 timeout-min))))))
+           timeout-ms (case units
+                        :ms timeout
+                        :s (* timeout 1000)
+                        :min (* timeout 1000 60)
+                        :hr (* timeout 1000 60 60))]
+       (pxmap (fn [instos]
+                (doall
+                 (for [insto instos
+                       :let [outfile (str fdir (str/butlast 3 insto) "inv.clj")]
+                       :when (or (not (fs/exists? outfile))
+                                 (< (fs/size outfile) 8000))]
+                   (do (prn "working on file" insto)
+                       (create-inv-sto (str fdir insto) nseqs timeout-ms)))))
+              ncore
+              (take 5 diff))
+
+       #_(doall
+        (for [instos (take 5 diff)
+              insto instos
+              :let [outfile (str fdir (str/butlast 3 insto) "inv.clj")]
+              :when (or (not (fs/exists? outfile))
+                        (< (fs/size outfile) 8000))]
+          (do (prn "working on file" insto)
+              (create-inv-sto (str fdir insto) nseqs timeout-ms)))))))
 
 (defn -main [& args]
-  (driver-create-inv 10 :hr))
+  (doall (driver-create-inv 100 10 :units :hr :ncore 5)))
