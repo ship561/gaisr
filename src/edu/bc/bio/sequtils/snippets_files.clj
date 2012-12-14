@@ -4,8 +4,8 @@
             [clojure.java.shell :as shell]
             [edu.bc.fs :as fs])
   (:use edu.bc.bio.sequtils.files
-        [clojure.contrib.pprint
-         :only (cl-format compile-format)]))
+        [edu.bc.utils.probs-stats :only (probs)]
+        [clojure.contrib.pprint :only (cl-format)]))
 
 (defn aln->sto
   "takes an alignment in Clustal W format and produces a sto file by using RNAalifold to determine
@@ -91,3 +91,30 @@
        (str/replace-re #"\<" "(") ;open
        (str/replace-re #"\>" ")" ) ;close
        (str/replace-re #"\:|\-" "." ))) ;replace gaps
+
+(defn profile
+  "Creates a profile object of the sto which is read in. The keys
+   include sequences, structure, base-frequency of columns, background
+   base frequency, which columns are paired, covariation, filename and
+   length."
+  
+  [sto]
+  (let [p (read-sto sto)
+        struct (map #(change-parens %) (p :cons))
+        s (p :seqs)
+        freqs (partition 2 (interleave (range (count (first s)))
+                                       (map frequencies
+                                            (apply map vector (map #(rest (str/split #"" %)) s)))))
+        fract-freqs (sort-by key (reduce (fn [l [n freq-map]]
+                                           (assoc l n (probs freq-map)))
+                                         {} freqs))
+        q (probs 1 (rest (str/split #"" (apply str (p :seqs)))))
+        pairs (map #(refold/make_pair_table %) struct)]
+  {:seqs s
+   :structure struct
+   :fract fract-freqs
+   :background q
+   :pairs pairs
+   :cov (p :cov)
+   :filename (p :file)
+   :length  (count (first s))}))

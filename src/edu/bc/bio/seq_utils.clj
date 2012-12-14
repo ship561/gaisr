@@ -36,24 +36,78 @@
    obsolete.  Note it now contains what once was in seq-utils2 and
    that should be factored as well."
 
-  (:require clojure.string
-            [clojure.contrib.string :as str]
-            [clojure.contrib.str-utils :as stru]
-            [clojure.set :as set]
-            [clojure.contrib.seq :as seq]
-            [clojure.zip :as zip]
+  (:require [clojure.contrib.string :as str]
             [clojure.contrib.io :as io]
             [edu.bc.fs :as fs])
 
   (:use clojure.contrib.math
         edu.bc.utils
         edu.bc.utils.probs-stats
-        [clojure.contrib.condition
-         :only (raise handler-case *condition* print-stack-trace)]
-        [clojure.contrib.pprint
-         :only (cl-format compile-format)]
+        [clojure.pprint
+         :only [cl-format]]
         ))
-     
+
+
+;;; ----------------------------------------------------------------------
+;;;
+;;; IUPAC (International Union of Pure and Applied Chemistry) codes
+;;; for nucleotides and various "groups" of nucleotides.
+;;;
+
+(def +IUPAC+
+     ^{:doc "These are the codes for \"bases\" used in alignments"}
+     {\A "Adenine"
+      \C "Cytosine"
+      \G "Guanine"
+      \T "Thymine"
+      \U "Uracil"
+      \R "AG"
+      \Y "CUT"
+      \S "GC"
+      \W "AUT"
+      \K "GUT"
+      \M "AC"
+      \B "CGUT"
+      \D "AGUT"
+      \H "ACUT"
+      \V "ACG"
+      \N "any"
+      \. "gap"
+      \- "gap"})
+
+(def +NONSTD-RNA+
+     ^{:doc "These are the codes for all non standard \"bases\" used
+             in alignments"}
+
+     {\T "Thymine"
+      \R "AG"       ; purines
+      \Y "CUT"      ; pyrimidines
+      \S "GC"
+      \W "AUT"
+      \K "GUT"
+      \M "AC"
+      \B "CGUT"
+      \D "AGUT"
+      \H "ACUT"
+      \V "ACG"
+      \N "any"
+      \. "gap"
+      \- "gap"})
+
+(def +RY-XLATE+
+     ^{:doc "Map for translating DNA and RNA seqs to purine and
+             pyrimidine seqs.  Assumes normed-elements (for which
+             see)"}
+     {\A \R \G \R \C \Y \U \Y \T \Y})
+
+
+;;; ----------------------------------------------------------------------
+;;;
+;;; Various sequence (element) transformers and translators.  Mostly
+;;; for nucleotide sequences, but could (should?) be generalized a bit
+;;; for AA seqs as well.
+;;;
+
 
 (defn norm-elements
   "\"Normalize\" elements in sequences by ensuring each character is
@@ -143,16 +197,6 @@
   "Reverse compliment of DNA/RNA sequence SQ. Return the sequence that
    would pair with (reverse SQ).
 
-;;; ----------------------------------------------------------------------
-;;;
-;;; Convert Sto and Fasta split sequence format files into conjoined
-;;; versions.  Many Sto and Fasta files from various sites come in old
-;;; fashioned 80 col mode where sequences are split at 80 column mark.
-;;; For aligned files this is even worse as you have groups of
-;;; sequences split across lines separated by whole pages of other
-;;; sequence (parts).  For example, RFAM alignments.  This group puts
-;;; all those back together so that each sequence is on a single line.
-
    Ex: (reverse-compliment \"AAGGAAUUCC\") => \"GGAAUUCCUU\"
   "
   [sq]
@@ -161,6 +205,22 @@
             {\A \T \T \A \G \C \C \G}
             {\A \U \U \A \G \C \C \G})]
     (str/join "" (reverse (map m sq)))))
+
+
+(defn seqXlate
+  "Translate sqs according to the translation map xmap.  SQS is either
+   a single sequence (string) or a collection of such.  It cannot be a
+   file.  Each sequence has its elements transformed according xmap
+   and each is returned as a string.
+  "
+  [sqs & {:keys [xmap] :or {xmap +RY-XLATE+}}]
+  (let [xlate (fn [sq]
+                (apply str (map #(let [x (xmap %)] (if x x %))
+                                (degap-seqs sq))))]
+    (if (string? sqs)
+      (xlate sqs)
+      (map xlate sqs))))
+
 
 
 
@@ -253,7 +313,7 @@
         legal-ends (keep #(when (= (subs (first %1) 1 2) end) %1) di-nts)]
     (binding [shuffles (atom {})
               limit-counter limit-counter]
-      (handler-case :type
+      (handler-case
         (loop [_ limit
                base-starters (nts-map start)]
           (let [s (dint-shuffle
@@ -265,8 +325,8 @@
               (recur (dec _)
                      (concat (drop 1 base-starters)
                              (take 1 base-starters))))))
-        (handle :explode
-          (println :limit-reached)))
+        ([:type :explode] e
+           (println :limit-reached)))
         @shuffles)))
 
 
