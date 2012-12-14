@@ -11,7 +11,7 @@
 
 (def homedir (fs/homedir))
 
-(defn remaining-files [outfile]
+(defn- remaining-files [outfile]
   (let [ofile outfile ;storage location
         fdir (str homedir "/bin/gaisr/trainset2/pos/")
         done-files (when (fs/exists? ofile) (->> (read-string (slurp ofile)) ;read existing data
@@ -23,7 +23,7 @@
                                         ;chuncks
          )))
 
-(defn create-inv-seqs
+(defn- create-inv-seqs
   "Generates inverse folded seqs using inverse-fold. If an outfile
    exists, then it will read it in and then add to the existing list
    of seqs. Takes a sequence name(nm), structure (st), n inverse seqs

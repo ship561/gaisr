@@ -12,6 +12,20 @@
          :only (read-sto change-parens sto->randsto)]
         edu.bc.utils.fold-ops))
 
+
+(defmacro with-out-appender [f & body]
+  `(with-open [w# (clojure.java.io/writer ~f :append true)]
+     (binding [*out* w#] ; I forgot this bit before.
+       ~@body)))
+
+(defn lazy-file-lines [file]
+  (letfn [(helper [rdr]
+            (lazy-seq
+             (if-let [line (.readLine rdr)]
+               (cons line (helper rdr))
+               (do (.close rdr) nil))))]
+    (helper (clojure.java.io/reader file))))
+
 ;;;-----------------------------------------------------------------------------
 ;;;
 ;;;analytics for robustness.clj. trying to establish the average
@@ -29,19 +43,21 @@
   
   [wt neighbors cons-keys n]
   (let [wt-probs (map #(probs 1 %) (transpose (fold wt :foldtype "RNAsubopt" :n n)))]
-    (for [[nm neighbor] neighbors
-          :let [mut-probs (map #(probs 1 %) (transpose (fold neighbor :foldtype "RNAsubopt" :n n)))
-                overlap (double (mean (subopt-overlap-seq neighbor cons-keys n)))]]
-      ;;find the jsd between the wt col_i and mut col_i
-      (map (fn [i c1 c2]
-             [nm [i (jensen-shannon c1 c2) overlap]])
-           (iterate inc 0) wt-probs mut-probs))))
+    (pxmap (fn [[nm neighbor]]
+             (let [mut-probs (map #(probs 1 %) (transpose (fold neighbor :foldtype "RNAsubopt" :n n)))
+                   overlap (double (mean (subopt-overlap-seq neighbor cons-keys n)))]
+               ;;find the jsd between the wt col_i and mut col_i
+               (map (fn [i c1 c2]
+                      [nm [i (jensen-shannon c1 c2) overlap]])
+                    (iterate inc 0) wt-probs mut-probs)))
+           5
+           neighbors)))
 
 (defn driver-jsd-wt-neighbor
   "for purposes of graphing."
   
-  []
-  (let [sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
+  [sto]
+  (let [;;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
         {sqs :seqs cons :cons} (read-sto sto :with-names true)
         cons (change-parens (first cons))
         sto-nm (fs/basename sto)] 
@@ -57,7 +73,7 @@
             (println (str/join "," (flatten (concat [sto-nm nm] j))))))))))
 
 (defn combine-jsd
-  "read output from driver-jsd-wt-neighbor and takes the mean jsd of all cols for a given mut"
+  "read output from driver-jsd-wt-neighbor and finds the mean jsd of all cols for a given mut"
   
   []
   (->> (rest (io/read-lines "/home/kitia/bin/gaisr/robustness/temp.txt"))
@@ -70,16 +86,16 @@
                    (assoc-in m [sto-name seq-name mut-name overlap jsd] (inc v))))
                {} )
        ;;mean jsd
-       (reduce (fn [m x] 
-                 (let [[sto-name x] x
-                       ]
-                   (->> (for [[seq-name x] x
+       (reduce (fn [m x]
+                 (let [[sto-name x] x]
+                   (->> (for [
+                              [seq-name x] x
                               [mut-name x]  x
                               [overlap jsd] x]
                           [sto-name seq-name mut-name overlap (mean jsd)])
                         vec
                         (conj m ))))
-               [] )
+                 [] )
        first))
 
 (defn compare-col-jsd
@@ -128,3 +144,5 @@
            cons (change-parens (first cons))]
        (io/with-out-writer outfile
          (compare-col-jsd sto)))))
+
+
