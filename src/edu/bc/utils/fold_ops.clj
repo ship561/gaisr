@@ -135,3 +135,13 @@
          str/split-lines
          (remove #(re-find #"[^\(\)\.]" %)))
     ))
+
+(defn bpdist
+  "finds the base-pair distance between 2 structures"
+
+  [st1 st2]
+  (->> ((shell/sh "RNAdistance" 
+                  :in (str st1 "\n" st2))
+        :out)
+       (re-find #"\d+" )
+       (Integer/parseInt)))
