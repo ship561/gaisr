@@ -1,6 +1,5 @@
 (ns robustness
  (:require [clojure.contrib.string :as str]
-           [clojure.java.shell :as shell]
            [clojure.contrib.io :as io]
            [incanter.stats :as stats]
            ;;[incanter.charts :as charts]
@@ -13,12 +12,12 @@
         edu.bc.utils
         edu.bc.utils.probs-stats
         edu.bc.utils.snippets-math
-        ;;edu.bc.bio.sequtils.dists
         ;;[incanter.core :only (view)]
-        refold
         smith-waterman
+        refold
         [edu.bc.bio.sequtils.snippets-files
          :only (read-sto change-parens sto->randsto)]
+        edu.bc.utils.fold-ops
         ))
 
 (def homedir (edu.bc.fs/homedir))
@@ -43,137 +42,14 @@
                   (keys (dissoc {"A" 1 "G" 1 "U" 1 "C" 1} ;;3 other bases to sub
                                 (subs s i (inc i)))))))))
 
-(defn inverse-fold
-  "Given a target structure, it will use RNAinverse to find n
-   sequences which fold into a similar structure. If :perfect? is
-   true, only returns sequences which fold into identical structures
-   else returns the first n sequences. Returns a list of sequences."
-  
-  [target n & {:keys [perfect? ncore]
-               :or {perfect? false ncore 2}}]
-  (let [inv-fold (fn [target n perfect?]
-                   (->> (map (fn [[s ensemble]]
-                               (if perfect?
-                                 (when-not (re-find #"d=" s) (re-find #"\w+" s)) ;perfect match
-                                 (re-find #"\w+" s))) ;take all output
-                             ;;calls the RNAinverse to generate inverse-fold seqs
-                             (->> ((shell/sh "RNAinverse"
-                                             "-Fmp"
-                                             (str "-R" n)
-                                             "-P" "/usr/local/ViennaRNA-2.0.0/rna_andronescu2007.par"
-                                             :in target)
-                                   :out)
-                                  str/split-lines
-                                  (partition-all 2)))
-                        flatten
-                        (remove nil? ))) ;imperfect matches removed if
-                                        ;they were nil
-        ;;generate the proper number of distinct inverse-fold sequences
-        inv-seq (loop [c 0
-                       cand []]
-                  (if (< c n)    
-                    (recur (count cand) ;distinct candidate seqs
-                           ;;add current list to newly generated ones
-                           (->> (pmap (fn [_] (inv-fold target (min 10 (quot n ncore)) perfect?)) (range ncore))
-                                (apply concat cand )
-                                distinct))
-                    (take n cand)))] 
-    inv-seq))
 
-(defn struct->matrix
-  "creates array of bp locations. Array resembles a hash-map where the
-  keys are base-pair locations and the value is 1 if
-  present. Locations not present are not represented in the hash-map."
-  
-  [st]
-  (reduce (fn [m kv] ;creates array of bp locations
-            (assoc m kv 1))
-          {} (make_pair_table st)))
 
-(defn suboptimals
-  "Finds the centroid structure of suboptimal structures and a vector
-   representation using 0's and 1's using a RNAmutants or RNAsubopt. s
-   is the RNA sequence (case doesn't matter as it will be all
-   upper-cased) and n is the number of suboptimal structures to
-   consider."
-  
-  [s n & {:keys [centroid-only]
-          :or {centroid-only true}}]
-  (let [;;s "AACGAUCCCGGG"
-        ;;n 10
-        s (.toUpperCase s)
-        structures (do (declare fold)
-                       (fold s :foldtype "RNAsubopt" :n n))
-        Z->centroid (fn [matrix] ;converts the list of subopt
-                                ;structures into a centroid
-                      (sort-by key
-                               (reduce (fn [m [[i j] p]]
-                                         (assoc m i "(" j ")"))
-                                       (into {}
-                                             (map #(vector %1 %2) (range (count s)) (repeat ".")))
-                                       ;;keeps bases that have over 50%
-                                       ;;representation in suboptimal structures
-                                       (filter (fn [[[i j] p]] 
-                                                 (and (< i j)
-                                                      (>= p 0.5)))
-                                               matrix))))
-        struct->vector (fn [st] (map #(if (= \. %) 0 1) (seq st))) ;change structure representation
-                                                                  ;to a vector of 0's and 1's
-        map-structures (map struct->matrix structures) ;sparse matrix
-                                                       ;of each structure
-        ]
-    ;;(doseq [i structures] (prn i))
-    ;;(prn (apply str (vals (Z->centroid partition-function))))
-    (if centroid-only
-      (let [partition-function (reduce  (fn [m [k v]]
-                                          (assoc m k (/ v n)))
-                                        {}  (apply merge-with + map-structures))
-            centroid (apply str (vals (Z->centroid partition-function)))]
-        [centroid (struct->vector centroid)]) ;returns centroid and vector representation
-      [0 map-structures]) ;returns all suboptimal structures
-    ))
-
-(defn fold
-  "Folds a sequence of RNA and returns only the target
-   structure. Target structure can either be centroid or MFE."
-  
-  [s & {:keys [foldtype n]
-        :or {foldtype "mfe" n 10000}}]
-  (case foldtype
-    "mfe"
-    (->> ((shell/sh "RNAfold"
-                    "-P" "/usr/local/ViennaRNA-2.0.0/rna_andronescu2007.par"
-                    "--noPS"
-                    :in s)
-          :out)
-         (str/split-lines)
-         second
-         (str/split #" ")
-         first)
-   
-    "centroid"
-    (first (suboptimals s n))
-    
-    "RNAmutants"
-    0 #_(->> ((shell/sh "./RNAmutants"
-                        "-l" "./lib/"
-                        "--mutation" "1"
-                        "-n" (str n)
-                        "--input-string" s
-                        :dir "/home/kitia/Desktop/RNAmutants/")
-              :out)
-             (drop-until #(re-find #"\> sampling \d+" ))
-             (remove #(re-find #"[^\(\)\.]" %)))
-    
-    "RNAsubopt"
-    (->> ((shell/sh "RNAsubopt"
-                    "-p" (str n) ;samples according to
-                                        ;Boltzmann distribution
-                    :in s)
-          :out)
-         str/split-lines
-         (remove #(re-find #"[^\(\)\.]" %)))
-    ))
+;;;-----------------------------------------------------------------------------
+;;;
+;;;find the %overlap of the suboptimal structures. In this case,
+;;;%overlap = neutrality
+;;;
+;;;-----------------------------------------------------------------------------
 
 (defn subopt-overlap-seq
   "Determine the percent overlap of each suboptimal structure of a
@@ -200,7 +76,7 @@
    the percent overlap for a 1-mutant neighbor."
 
   [s cons-keys & {:keys [ncore nsubopt]
-                  :or {ncore 1 nsubopt 1000}}]
+                  :or {ncore 2 nsubopt 1000}}]
   (let [neighbors (mutant-neighbor s)] ;1-mut neighbors
     (pxmap (fn [neighbor]
              ;;a freqmap of % overlap for each neighbor
@@ -236,6 +112,13 @@
        l))] ;l=list of seqs in the sto
     ))
 
+;;;-----------------------------------------------------------------------------
+;;;end %overlap of subopt structures
+;;;-----------------------------------------------------------------------------
+
+;;;-----------------------------------------------------------------------------
+;;;suboptimal significance
+;;;-----------------------------------------------------------------------------
 (defn valid-seq-struct
   "Checks the sto to make sure that all sequences in the file can form
    part of the consensus structure. This is useful when ensuring that
@@ -252,24 +135,6 @@
                          (let [[_ st] (remove-gaps s cons)]
                            (valid? st)))
                        sqs))))
-
-(defn avg-overlap
-  "Takes a map of percent overlaps where it is organized in [k v]
-   pairs. k=file name and v=list of lists of frequency maps of percent
-   overlap of 1000 suboptimal structures for the WT and each of its
-   1-mutant neighbors. Returns a map of maps of the summary stats."
-  
-  [map-of-per-overlaps]
-  (reduce (fn [m [k list-lists-maps]]
-            (let [list-maps (->> list-lists-maps 
-                                (apply concat) ;combines data from all sequences
-                                (apply merge-with +)) ;combines the
-                                        ;freqmaps into 1 map
-                  avg (double (mean list-maps))
-                  sd (double (sd list-maps))
-                  med (double (median-est list-maps))]
-              (assoc m k {:med med :mean avg :sd sd})))
-          {} map-of-per-overlaps))
 
 (defn subopt-significance
   "Takes an input sto and estimates the significance of the suboptimal
@@ -292,6 +157,22 @@
                                (repeatedly #(sto->randsto insto (fs/tempfile))))) ;create random stos
                  )))
 
+;;;-----------------------------------------------------------------------------
+;;;suboptimal robustness
+;;;-----------------------------------------------------------------------------
+
+(defn remaining-files [outfile]
+  (let [ofile outfile ;storage location
+        fdir (str homedir "/bin/gaisr/trainset2/pos/")
+        done-files (when (fs/exists? ofile) (->> (read-string (slurp ofile)) ;read existing data
+                                                 (into {})))]
+    (->> (filter #(and (re-find #"\.7\.sto" %) ;subset of data
+                       (not (contains? done-files (keyword %)))) ;remove done files
+                 (fs/listdir fdir))
+         (partition-all 2 ) ;group into manageable
+                                        ;chuncks
+         )))
+
 (defn create-inv-seqs
   "Generates inverse folded seqs using inverse-fold. If an outfile
    exists, then it will read it in and then add to the existing list
@@ -312,6 +193,52 @@
             (prn (assoc cur-seqs nm (vec inv-seqs))))
           (take n inv-seqs)))))
 
+(defn create-inv-sto
+  "generates inverse sequences for a sto by calling the
+   create-inv-seqs function. Will timeout after timeout-min is
+   reached. Input a sto, the number of inverse seqs to generate for
+   each seq in the sto and the timeout in minutes. Returns a vector
+   [sto-name status] at to indicate success."
+
+  [insto n timeout-min]
+  (let [outfile (str (str/butlast 3 insto) "inv.clj")
+        {inseqs :seqs cons :cons} (read-sto insto :with-names true)
+        cons (change-parens (first cons))
+        timeout-ms (* timeout-min 1000 60)
+        f (fn []
+            (doall
+             (for [[nm s] inseqs]
+               (let [[_ st] (remove-gaps s cons)
+                     x (create-inv-seqs nm st n outfile)]
+                 x)
+               )))
+        fc-g (future-call f)]
+    (if-let [v (deref fc-g timeout-ms false)]
+      [insto :done]
+      (do (future-cancel fc-g) [insto :cancelled]))))
+
+(defn driver-create-inv
+  "drives the create-inv-sto function by feeding it all the stos of interest - mainly the *.7.sto."
+
+  ([timeout]
+     (driver-create-inv timeout :s))
+  
+  ([timeout units]
+     (let [fdir (str homedir "/bin/gaisr/trainset2/pos/")
+           ofile (str homedir "/bin/gaisr/robustness/subopt-robustness-test2.clj")
+           diff (remaining-files ofile)
+           timeout-min (case units
+                             :ms (/ timeout 1000 60)
+                             :s (/ timeout 60)
+                             :min timeout
+                             :hr (* timeout 60))]
+       (for [instos (take 5 diff)
+             insto instos
+             :let [outfile (str fdir (str/butlast 3 insto) "inv.clj")]
+             :when (not (fs/exists? outfile)) ]
+         (do (prn "working on file" insto)
+             (create-inv-sto (str fdir insto) 10 timeout-min))))))
+
 (defn subopt-robustness
   "Takes an input sto and estimates the significance of the robustness
    of the sequence. Takes a sequence and the consensus structure and
@@ -326,7 +253,8 @@
   (let [ ;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
         inv-sto (str (str/butlast 3 sto) "inv.clj")
         {l :seqs cons :cons} (read-sto sto :with-names true)
-        cons (change-parens (first cons))]
+        cons (change-parens (first cons))
+        ]
     [sto
      (map (fn [[nm s]]
             (let [[s st] (remove-gaps s cons)
@@ -346,6 +274,25 @@
 
 ;;;-----------------------------------
 ;;;Section for visualizing data
+
+(defn avg-overlap
+  "Takes a map of percent overlaps where it is organized in [k v]
+   pairs. k=file name and v=list of lists of frequency maps of percent
+   overlap of 1000 suboptimal structures for the WT and each of its
+   1-mutant neighbors. Returns a map of maps of the summary stats."
+  
+  [map-of-per-overlaps]
+  (reduce (fn [m [k list-lists-maps]]
+            (let [list-maps (->> list-lists-maps 
+                                (apply concat) ;combines data from all sequences
+                                (apply merge-with +)) ;combines the
+                                        ;freqmaps into 1 map
+                  avg (double (mean list-maps))
+                  sd (double (sd list-maps))
+                  med (double (median-est list-maps))]
+              (assoc m k {:med med :mean avg :sd sd})))
+          {} map-of-per-overlaps))
+
 (defn overlap-per-seq
   "Takes an entry from teh map-of-lists-of-lists-of-maps data
    structure. This entry has a format of [nm data]. It averages the
@@ -381,84 +328,6 @@
            (charts/add-lines l (range 200) y :series-label i))
          (iterate inc 2) (rest lines))))
 
-(defn foo
-  "Compares the distribution of base-pairs and gap chars in each
-   column between the wt and 1-mutant neighbor. Takes a seq and
-   neighbors, consensus structure keys and
-   n=number_suboptimal_structures. Returns a list of vectors where
-   each vector is [mutant-name [ith-col jsd(wt,mut) %overlap]]."
-  
-  [wt neighbors cons-keys n]
-  (let [wt-probs (map #(probs 1 %) (transpose (fold wt :foldtype "RNAsubopt" :n n)))]
-    (for [[nm neighbor] neighbors
-          :let [mut-probs (map #(probs 1 %) (transpose (fold neighbor :foldtype "RNAsubopt" :n n)))
-                overlap (double (mean (subopt-overlap-seq neighbor cons-keys n)))]]
-      ;;find the jsd between the wt col_i and mut col_i
-      (map (fn [i c1 c2]
-             [nm [i (jensen-shannon c1 c2) overlap]])
-           (iterate inc 0) wt-probs mut-probs))))
-
-(defn bar []
-  (let [sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
-                  {sqs :seqs cons :cons} (read-sto sto :with-names true)
-                  cons (change-parens (first cons))
-                  n 10] 
-              (io/with-out-writer "/home/kitia/bin/gaisr/robustness/temp.txt"
-                (println "mutname, pos, jsd, overlap")
-                (doseq [[_ s] (take 1 sqs)]
-                  (let [[wt st] (remove-gaps s cons)
-                        cons-keys (set (keys (struct->matrix st)))
-                        n 1000
-                        neighbors (into {} (mutant-neighbor wt :with-names true))]
-                    (doseq [i (foo wt neighbors cons-keys n)
-                            j i]
-                      (println (str/join "," (flatten j)))))))
-               ))
-(defn abc
-
-  ([sto]
-     (let [sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
-           {sqs :seqs cons :cons} (read-sto sto :with-names true)
-           cons (change-parens (first cons))]
-       (prn sto)
-       (doseq [[seqnm s] sqs]
-         (let [[wt st] (remove-gaps s cons)
-               cons-keys (set (keys (struct->matrix st)))
-               n 1000
-               neighbors (into {} (mutant-neighbor wt :with-names true))
-               loi (->> (foo wt neighbors cons-keys n)
-                        ;;process the jsd to find col of interest
-                        #_(map (fn [jsd]
-                               (remove #(or (< (-> % second second) 0.8) ;jsd
-                                            (> (-> % second third) 0.4)) ;%overlap
-                                       jsd))
-                             )
-                        (remove #(empty? %) )
-                        (map vec ))
-               ]
-           (prn seqnm)
-           (doseq [x loi
-                   [mutnm [pos h overlap]] x]
-             (prn "wt" pos)
-             (prn s)
-             (prn (apply str (repeat 10 "0123456789")))
-             (doseq [i (fold s :foldtype "RNAsubopt" :n 3)]
-               (prn i))
-             (prn seqnm mutnm "pos" pos "jsd" h "overlap" overlap)
-             (prn (neighbors mutnm))
-             (prn (apply str (repeat 10 "0123456789")))
-             (doseq [i (fold (neighbors mutnm) :foldtype "RNAsubopt" :n 3)]
-               (prn i)))))))
-  
-  ([sto outfile]
-     (let [;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
-           ;outfile "/home/kitia/bin/gaisr/robustness/struct-confirm.txt"
-           {l :seqs cons :cons} (read-sto sto :with-names true)
-           cons (change-parens (first cons))]
-       (io/with-out-writer outfile
-         (abc sto))
-      )))
-
 ;;;---------------------------------------------------
 
 ;;;---------------------------------------------------
@@ -474,8 +343,7 @@
       :or {pos true}}]
   (let [fdir (str homedir "/bin/gaisr/trainset2/"
                   (if :pos "pos/" "neg/"))
-        fs (str/split-lines ((shell/sh "ls" :dir fdir) :out))
-        fsto (filter #(re-find #"\.sto" %) fs)]
+        fsto (filter #(re-find #"\.sto" %) (fs/listdir fdir))]
     (doall
      ;;go over each sto in the dir provided
      (for [sto (take 3 (filter #(re-seq #"RF00555-seed" %) fsto))]
@@ -491,8 +359,8 @@
    than the average average-suboptimal-overlap of all inverse-folded
    seqs. The wt ranking defines the significance."
   
-  [outfile & {:keys [n ncore]
-      :or {n 10 ncore 5}}]
+  [outfile & {:keys [n ncores]
+      :or {n 10 ncores 2}}]
   (let [ofile outfile ;storage location
         fdir (str homedir "/bin/gaisr/trainset2/pos/")
         done-files (when (fs/exists? ofile) (->> (read-string (slurp ofile)) ;read existing data
@@ -1057,64 +925,9 @@
 
 
 
-(defn remaining-files [outfile]
-  (let [ofile outfile ;storage location
-        fdir (str homedir "/bin/gaisr/trainset2/pos/")
-        done-files (when (fs/exists? ofile) (->> (read-string (slurp ofile)) ;read existing data
-                                                 (into {})))]
-    (->> (filter #(and (re-find #"\.7\.sto" %) ;subset of data
-                       (not (contains? done-files (keyword %)))) ;remove done files
-                 (fs/listdir fdir))
-         (partition-all 2 ) ;group into manageable
-                                        ;chuncks
-         )
-    ))
 
-(defn create-inv-sto
-  "generates inverse sequences for a sto by calling the create-inv-seqs function"
 
-  ([insto n timeout-min]
-     (let [outfile (str (str/butlast 3 insto) "inv.clj")]
-       (create-inv-sto insto n timeout-min outfile)))
-  
-  ([insto n timeout-min outfile]
-     (let [{inseqs :seqs cons :cons} (read-sto insto :with-names true)
-           cons (change-parens (first cons))
-           timeout-ms (* timeout-min 1000 60)
-           f (fn []
-               (doall
-                (for [[nm s] inseqs]
-                  (let [[_ st] (remove-gaps s cons)
-                        x (create-inv-seqs nm st n outfile)]
-                    x)
-                  )))
-           fc-g (future-call f)]
-       (if-let [v (deref fc-g timeout-ms false)]
-         [insto :done]
-         (do (future-cancel fc-g) [insto :cancelled])))))
-    
-(defn driver-create-inv
-  "drives the create-inv-sto function by feeding it all the stos of interest - mainly the *.7.sto."
 
-  ([timeout]
-     (driver-create-inv timeout :s))
-  
-  ([timeout units]
-     (let [fdir (str homedir "/bin/gaisr/trainset2/pos/")
-           ofile (str homedir "/bin/gaisr/robustness/subopt-robustness-test2.clj")
-           diff (remaining-files ofile)
-           timeout-min (case units
-                             :ms (/ timeout 1000 60)
-                             :s (/ timeout 60)
-                             :min timeout
-                             :hr (* timeout 60))]
-       (for [instos (take 5 diff)
-             insto instos
-             :let [outfile (str fdir (str/butlast 3 insto) "inv.clj")]
-             :when (and (not (fs/exists? outfile))
-                        (< (fs/size outfile) 8000)) ]
-         (do (prn "working on file" insto)
-             (create-inv-sto (str fdir insto) 100 timeout-min))))))
 
 
 )
