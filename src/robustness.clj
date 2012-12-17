@@ -51,6 +51,30 @@
 ;;;
 ;;;-----------------------------------------------------------------------------
 
+(defn subopt-bpdist-seq
+  [mut-seq cons n]
+  (let [substructs (fold mut-seq :foldtype "RNAsubopt" :n n)
+        struct-similarity (fn [cons mut-subopt]
+                            (- 1 (/ (bpdist cons mut-subopt) ;1-bpdist/L
+                                    (count cons))))] ;length s
+    ;;takes percent overlap and
+    ;;reduces it to a freqmap to
+    ;;save memeory
+    (-> (map (fn [mut-subopt]
+               (struct-similarity cons mut-subopt))
+             substructs)
+        frequencies)))
+
+(defn subopt-bpdist-neighbors
+  [s cons & {:keys [ncore nsubopt]
+             :or {ncore 2 nsubopt 1000}}]
+  (let [neighbors (mutant-neighbor s)] ;1-mut neighbors
+    (pxmap (fn [neighbor]
+             ;;a freqmap of % overlap for each neighbor
+             (subopt-bpdist-seq cons neighbor nsubopt))
+           ncore
+           (concat (list s) neighbors))))
+
 (defn subopt-overlap-seq
   "Determine the percent overlap of each suboptimal structure of a
   sequence s to the consensus structure. compares against n suboptimal
@@ -161,83 +185,6 @@
 ;;;suboptimal robustness
 ;;;-----------------------------------------------------------------------------
 
-(defn remaining-files [outfile]
-  (let [ofile outfile ;storage location
-        fdir (str homedir "/bin/gaisr/trainset2/pos/")
-        done-files (when (fs/exists? ofile) (->> (read-string (slurp ofile)) ;read existing data
-                                                 (into {})))]
-    (->> (filter #(and (re-find #"\.7\.sto" %) ;subset of data
-                       (not (contains? done-files (keyword %)))) ;remove done files
-                 (fs/listdir fdir))
-         (partition-all 2 ) ;group into manageable
-                                        ;chuncks
-         )))
-
-(defn create-inv-seqs
-  "Generates inverse folded seqs using inverse-fold. If an outfile
-   exists, then it will read it in and then add to the existing list
-   of seqs. Takes a sequence name(nm), structure (st), n inverse seqs
-   to make, and outfile. Returns the list of sequences."
-
-  [nm st n outfile]
-  
-  (let [cur-seqs (if (fs/exists? outfile)
-                   (-> outfile slurp read-string)
-                   {nm []})
-        cur-n (count (cur-seqs nm))
-        inv-seqs (distinct (lazy-cat (cur-seqs nm) (inverse-fold st n :perfect? false)))]
-    (if (>= cur-n n)
-      (cur-seqs nm)
-      (do (doall inv-seqs)
-          (io/with-out-writer outfile
-            (prn (assoc cur-seqs nm (vec inv-seqs))))
-          (take n inv-seqs)))))
-
-(defn create-inv-sto
-  "generates inverse sequences for a sto by calling the
-   create-inv-seqs function. Will timeout after timeout-min is
-   reached. Input a sto, the number of inverse seqs to generate for
-   each seq in the sto and the timeout in minutes. Returns a vector
-   [sto-name status] at to indicate success."
-
-  [insto n timeout-min]
-  (let [outfile (str (str/butlast 3 insto) "inv.clj")
-        {inseqs :seqs cons :cons} (read-sto insto :with-names true)
-        cons (change-parens (first cons))
-        timeout-ms (* timeout-min 1000 60)
-        f (fn []
-            (doall
-             (for [[nm s] inseqs]
-               (let [[_ st] (remove-gaps s cons)
-                     x (create-inv-seqs nm st n outfile)]
-                 x)
-               )))
-        fc-g (future-call f)]
-    (if-let [v (deref fc-g timeout-ms false)]
-      [insto :done]
-      (do (future-cancel fc-g) [insto :cancelled]))))
-
-(defn driver-create-inv
-  "drives the create-inv-sto function by feeding it all the stos of interest - mainly the *.7.sto."
-
-  ([timeout]
-     (driver-create-inv timeout :s))
-  
-  ([timeout units]
-     (let [fdir (str homedir "/bin/gaisr/trainset2/pos/")
-           ofile (str homedir "/bin/gaisr/robustness/subopt-robustness-test2.clj")
-           diff (remaining-files ofile)
-           timeout-min (case units
-                             :ms (/ timeout 1000 60)
-                             :s (/ timeout 60)
-                             :min timeout
-                             :hr (* timeout 60))]
-       (for [instos (take 5 diff)
-             insto instos
-             :let [outfile (str fdir (str/butlast 3 insto) "inv.clj")]
-             :when (not (fs/exists? outfile)) ]
-         (do (prn "working on file" insto)
-             (create-inv-sto (str fdir insto) 10 timeout-min))))))
 
 (defn subopt-robustness
   "Takes an input sto and estimates the significance of the robustness
@@ -573,35 +520,35 @@
 ;;;difference. maybe switch to RNAdistance since the structures are
 ;;;being shortened according to the sequence length.
 (timefn (fn [] 
-                      (let [fdir "/home/peis/bin/gaisr/trainset2/pos/"
-                            fs (str/split-lines ((shell/sh "ls" :dir fdir) :out))
-                            fsto (filter #(re-find #"\.sto" %) fs)
-                            
-                            ]
-                        (doall 
-                         (map (fn [sto]
-                                  (let [{l :seqs cons :cons} (read-sto (str fdir sto) :with-names true)
-                                        cons (change-parens (first cons))]
-                                  [sto
-                                   (doall (map
-                                           (fn [[nm s]] (let [[s st] (remove-gaps s cons)
-                                                             centroid (first (suboptimals s 10000)) 
-                                                             n 9 l (count s)]
-                                                         (prn "cent" centroid)
-                                                         (prn "cons" st)
-                                                         (prn (- 1 (jensen-shannon (probs n cons) (probs n centroid))) 
-                                                              (- 1 (double (/ (levenshtein cons centroid) l)))
-                                                              (- 1 (double (/ (->> ((shell/sh "RNAdistance" 
-                                                                                         :in (str cons "\n" centroid))
-                                                                               :out)
-                                                                              (re-find #"\d+" )
-                                                                              (Integer/parseInt)) 
-                                                                         l))))))
-                                    
-                                    l))]
-                                  ))
-                              ["RF00555-seed.4.sto" "RF00558-seed.3.sto"
-                               "RF00559-seed.7.sto" "RF00167-seed.9.sto"])))))
+          (let [fdir "/home/peis/bin/gaisr/trainset2/pos/"
+                fs (str/split-lines ((shell/sh "ls" :dir fdir) :out))
+                fsto (filter #(re-find #"\.sto" %) fs)
+                
+                ]
+            (doall 
+             (map (fn [sto]
+                    (let [{l :seqs cons :cons} (read-sto (str fdir sto) :with-names true)
+                          cons (change-parens (first cons))]
+                      [sto
+                       (doall (map
+                               (fn [[nm s]] (let [[s st] (remove-gaps s cons)
+                                                 centroid (first (suboptimals s 10000)) 
+                                                 n 9 l (count s)]
+                                             (prn "cent" centroid)
+                                             (prn "cons" st)
+                                             (prn (- 1 (jensen-shannon (probs n cons) (probs n centroid))) 
+                                                  (- 1 (double (/ (levenshtein cons centroid) l)))
+                                                  (- 1 (double (/ (->> ((shell/sh "RNAdistance" 
+                                                                                  :in (str cons "\n" centroid))
+                                                                        :out)
+                                                                       (re-find #"\d+" )
+                                                                       (Integer/parseInt)) 
+                                                                  l))))))
+                               
+                               l))]
+                      ))
+                  ["RF00555-seed.4.sto" "RF00558-seed.3.sto"
+                   "RF00559-seed.7.sto" "RF00167-seed.9.sto"])))))
 
 
 

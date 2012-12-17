@@ -26,6 +26,8 @@
                (do (.close rdr) nil))))]
     (helper (clojure.java.io/reader file))))
 
+
+
 ;;;-----------------------------------------------------------------------------
 ;;;
 ;;;analytics for robustness.clj. trying to establish the average
@@ -41,14 +43,15 @@
    n=number_suboptimal_structures. Returns a list of vectors where
    each vector is [mutant-name [ith-col jsd(wt,mut) %overlap]]."
   
-  [wt neighbors cons-keys n]
+  [wt neighbors cons cons-keys n]
   (let [wt-probs (map #(probs 1 %) (transpose (fold wt :foldtype "RNAsubopt" :n n)))]
     (pxmap (fn [[nm neighbor]]
              (let [mut-probs (map #(probs 1 %) (transpose (fold neighbor :foldtype "RNAsubopt" :n n)))
-                   overlap (double (mean (subopt-overlap-seq neighbor cons-keys n)))]
+                   overlap (double (mean (subopt-overlap-seq neighbor cons-keys n)))
+                   bpdist (double (mean (subopt-bpdist-seq neighbor cons n)))]
                ;;find the jsd between the wt col_i and mut col_i
                (map (fn [i c1 c2]
-                      [nm [i (jensen-shannon c1 c2) overlap]])
+                      [nm [i (jensen-shannon c1 c2) overlap bpdist]])
                     (iterate inc 0) wt-probs mut-probs)))
            5
            neighbors)))
@@ -62,40 +65,46 @@
         cons (change-parens (first cons))
         sto-nm (fs/basename sto)] 
     (io/with-out-writer "/home/kitia/bin/gaisr/robustness/temp.txt"
-      (println "sto-name,seq-name,mutname, pos, jsd, overlap")
-      (doseq [[nm s] sqs]
+      (println "sto-name,seq-name,mutname, pos, jsd, overlap, bpdist")
+      (doseq [[seq-nm s] sqs]
         (let [[wt st] (remove-gaps s cons)
               cons-keys (set (keys (struct->matrix st)))
               n 1000
               neighbors (into {} (mutant-neighbor wt :with-names true))]
-          (doseq [i (jsd-wt-neighbor wt neighbors cons-keys n)
+          (doseq [i (jsd-wt-neighbor wt neighbors cons cons-keys n)
                   j i]
-            (println (str/join "," (flatten (concat [sto-nm nm] j))))))))))
+            (println (str/join "," (flatten (concat [sto-nm seq-nm] j))))))))))
 
 (defn combine-jsd
-  "read output from driver-jsd-wt-neighbor and finds the mean jsd of all cols for a given mut"
+  "read output from driver-jsd-wt-neighbor and finds the mean jsd of
+   all cols for a given mut. the return is a vector of vectors where
+   each vector contains [sto-name, seq-name, mut-name, %overlap,
+   mean(jsd)]."
   
   []
   (->> (rest (io/read-lines "/home/kitia/bin/gaisr/robustness/temp.txt"))
        (map #(str/split #"," %) )
        ;;merges the jsds for each col with the same mut-name and overlap
-       (reduce (fn [m [sto-name seq-name mut-name _ jsd overlap]]
+       (reduce (fn [m [sto-name seq-name mut-name _ jsd overlap bpdist]]
                  (let [jsd (Double/parseDouble jsd)
                        overlap (Double/parseDouble overlap)
-                       v (get-in m [sto-name seq-name mut-name overlap jsd] 0)]
-                   (assoc-in m [sto-name seq-name mut-name overlap jsd] (inc v))))
+                       bpdist (Double/parseDouble bpdist)
+                       k [sto-name seq-name mut-name overlap bpdist jsd]
+                       v (get-in m k 0)]
+                   (assoc-in m k (inc v))))
                {} )
        ;;mean jsd
        (reduce (fn [m x]
                  (let [[sto-name x] x]
                    (->> (for [
                               [seq-name x] x
-                              [mut-name x]  x
-                              [overlap jsd] x]
-                          [sto-name seq-name mut-name overlap (mean jsd)])
+                              [mut-name x] x
+                              [overlap x] x
+                              [bpdist jsd] x]
+                          [sto-name seq-name mut-name overlap bpdist (mean jsd)])
                         vec
                         (conj m ))))
-                 [] )
+               [] )
        first))
 
 (defn compare-col-jsd
@@ -146,3 +155,22 @@
          (compare-col-jsd sto)))))
 
 
+(comment
+  
+  (let [[remaining-file & remaining-files]
+        (filter #(re-find #".1.sto" %) 
+                (fs/listdir "/home/kitia/bin/gaisr/trainset2/pos/"))
+        fdir "/home/kitia/bin/gaisr/trainset2/pos/"
+        odir "/home/kitia/bin/gaisr/robustness/"
+        outfn (fn [x] (doseq [out x] (println (str/join "," out))))]
+    (driver-jsd-wt-neighbor (str fdir remaining-file))
+    (io/with-out-writer (str odir "temp3.txt") 
+      (println "sto-name,seq-name,mut-name,overlap,bpdist,jsd")
+      (outfn (combine-jsd)))
+    (doseq [sto remaining-files]
+      (driver-jsd-wt-neighbor (str fdir sto))
+      (with-out-appender (str odir "temp3.txt")
+        (outfn (combine-jsd)))))
+
+
+  )
