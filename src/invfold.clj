@@ -9,7 +9,7 @@
          :only (read-sto change-parens)]
         refold))
 
-(def homedir (fs/homedir))
+(def ^{:private true} homedir (fs/homedir))
 
 (defn- remaining-files [outfile]
   (let [ofile outfile ;storage location
@@ -23,7 +23,7 @@
                                         ;chuncks
          )))
 
-(defn- create-inv-seqs
+(defn create-inv-seqs
   "Generates inverse folded seqs using inverse-fold. If an outfile
    exists, then it will read it in and then add to the existing list
    of seqs. Takes a sequence name(nm), structure (st), n inverse seqs
@@ -74,12 +74,12 @@
                      :or {units :s ncore 1}}]
      (let [fdir (str homedir "/bin/gaisr/trainset2/pos/")
            ofile (str homedir "/bin/gaisr/robustness/subopt-robustness-test2.clj")
-           diff (remaining-files ofile)
+           diff (take 100 (remaining-files ofile))
            timeout-ms (case units
-                        :ms timeout
-                        :s (* timeout 1000)
-                        :min (* timeout 1000 60)
-                        :hr (* timeout 1000 60 60))]
+                            :ms timeout
+                            :s (* timeout 1000)
+                            :min (* timeout 1000 60)
+                            :hr (* timeout 1000 60 60))]
        (pxmap (fn [instos]
                 (doall
                  (for [insto instos
@@ -89,16 +89,15 @@
                    (do (prn "working on file" insto)
                        (create-inv-sto (str fdir insto) nseqs timeout-ms)))))
               ncore
-              (take 5 diff))
-
+              diff)
        #_(doall
-        (for [instos (take 5 diff)
+        (for [instos diff
               insto instos
               :let [outfile (str fdir (str/butlast 3 insto) "inv.clj")]
               :when (or (not (fs/exists? outfile))
                         (< (fs/size outfile) 8000))]
-          (do (prn "working on file" insto)
-              (create-inv-sto (str fdir insto) nseqs timeout-ms)))))))
+          insto)))))
 
 (defn -main [& args]
   (doall (driver-create-inv 100 10 :units :hr :ncore 5)))
+

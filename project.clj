@@ -6,6 +6,7 @@
 
   :dependencies [[org.clojure/clojure "1.5.0-beta1"]
                  [mlabs.jars/clojure-contrib "1.2.0-mlab"]
+                 [org.clojure/tools.namespace "0.2.2"]
 
                  [log4j/log4j "1.2.13"] ; base java log4j
 

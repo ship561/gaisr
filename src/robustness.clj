@@ -18,9 +18,10 @@
         [edu.bc.bio.sequtils.snippets-files
          :only (read-sto change-parens sto->randsto)]
         edu.bc.utils.fold-ops
+        invfold
         ))
 
-(def homedir (edu.bc.fs/homedir))
+(def ^{:private true} homedir (edu.bc.fs/homedir))
 
 (defn mutant-neighbor
   "Takes a string s and finds the 3L 1-mer mutants. String can only

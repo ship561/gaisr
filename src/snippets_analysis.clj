@@ -1,8 +1,10 @@
 (ns snippets-analysis
   (:require [clojure.contrib.string :as str]
-           [clojure.contrib.io :as io]
-           [clojure.set :as sets]
-           [edu.bc.fs :as fs])
+            [clojure.contrib.io :as io]
+            [clojure.set :as sets]
+            [edu.bc.fs :as fs]
+            [clojure.core.reducers :as r]
+           )
   (:use robustness
         refold
         edu.bc.utils
@@ -12,6 +14,7 @@
          :only (read-sto change-parens sto->randsto)]
         edu.bc.utils.fold-ops))
 
+(def ^{:private true} homedir (fs/homedir))
 
 (defmacro with-out-appender [f & body]
   `(with-open [w# (clojure.java.io/writer ~f :append true)]
@@ -53,18 +56,18 @@
                (map (fn [i c1 c2]
                       [nm [i (jensen-shannon c1 c2) overlap bpdist]])
                     (iterate inc 0) wt-probs mut-probs)))
-           5
+           100
            neighbors)))
 
 (defn driver-jsd-wt-neighbor
   "for purposes of graphing."
   
   [sto]
-  (let [;;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
+  (let [;;sto (str homedir "/bin/gaisr/trainset2/pos/RF00555-seed.1.sto")
         {sqs :seqs cons :cons} (read-sto sto :with-names true)
         cons (change-parens (first cons))
         sto-nm (fs/basename sto)] 
-    (io/with-out-writer "/home/kitia/bin/gaisr/robustness/temp.txt"
+    (io/with-out-writer (str homedir  "/bin/gaisr/robustness/temp.txt")
       (println "sto-name,seq-name,mutname, pos, jsd, overlap, bpdist")
       (doseq [[seq-nm s] sqs]
         (let [[wt st] (remove-gaps s cons)
@@ -82,7 +85,7 @@
    mean(jsd)]."
   
   []
-  (->> (rest (io/read-lines "/home/kitia/bin/gaisr/robustness/temp.txt"))
+  (->> (rest (io/read-lines (str homedir "/bin/gaisr/robustness/temp.txt")))
        (map #(str/split #"," %) )
        ;;merges the jsds for each col with the same mut-name and overlap
        (reduce (fn [m [sto-name seq-name mut-name _ jsd overlap bpdist]]
@@ -115,7 +118,7 @@
    data out to repl for examination."
   
   ([sto]
-     (let [sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
+     (let [sto (str homedir "/bin/gaisr/trainset2/pos/RF00555-seed.1.sto")
            {sqs :seqs cons :cons} (read-sto sto :with-names true)
            cons (change-parens (first cons))]
        (prn sto)
@@ -159,9 +162,9 @@
   
   (let [[remaining-file & remaining-files]
         (filter #(re-find #".1.sto" %) 
-                (fs/listdir "/home/kitia/bin/gaisr/trainset2/pos/"))
-        fdir "/home/kitia/bin/gaisr/trainset2/pos/"
-        odir "/home/kitia/bin/gaisr/robustness/"
+                (fs/listdir (str homedir "/bin/gaisr/trainset2/pos/")))
+        fdir (str homedir "/bin/gaisr/trainset2/pos/")
+        odir (str homedir "/bin/gaisr/robustness/")
         outfn (fn [x] (doseq [out x] (println (str/join "," out))))]
     (driver-jsd-wt-neighbor (str fdir remaining-file))
     (io/with-out-writer (str odir "temp3.txt") 
