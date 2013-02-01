@@ -555,3 +555,18 @@
                                         (str "-R" n)
                                         "-P" "/usr/local/ViennaRNA-2.0.0/rna_andronescu2007.par"
                                         :in target)) 2 "((...))")) 1000 :error)
+
+(defmacro find-string [s1 s2]
+  '(re-find s1 ~s2))
+
+(let [known-primes #{}
+      some-set (range 2 100000)]
+  (loop [i some-set
+         kp known-primes]
+    (letfn [(prime? [n]
+              (or (contains? kp n)
+                  (every? #(pos? (mod n %)) (range 2 (int (Math/sqrt n))))))]
+      (if (seq i)
+        (recur (rest i)
+               (if (prime? (first i)) (conj kp (first i)) kp))
+        kp))))

@@ -44,6 +44,9 @@
                  [nz.ac.waikato.cms.weka/weka-stable "3.6.8"]
                  [tw.edu.ntu.csie/libsvm "3.1"]
 
+                 ;;json
+                 [org.clojure/data.json "0.2.1"]
+                 
                  ;;ending stalled futures
                  [clojail "1.0.3"]
                  ]

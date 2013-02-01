@@ -2,9 +2,10 @@
   (:require [clojure.contrib.string :as str]
            [clojure.contrib.io :as io]
            [clojure.set :as sets]
-           [edu.bc.fs :as fs])
+           [edu.bc.fs :as fs]
+           [clojure.data.json :as json])
   (:use robustness
-        refold
+        [refold :only (remove-gaps)]
         edu.bc.utils
         edu.bc.utils.probs-stats
         edu.bc.utils.snippets-math
@@ -156,7 +157,9 @@
 
 
 (comment
-  
+  ;;;generates the data for for comparing the subopt overlap and the
+;;;bpdist as well as jsd. generates the data to some output file. Not
+;;;a function but it simply generates the data in csv file format.
   (let [[remaining-file & remaining-files]
         (filter #(re-find #".1.sto" %) 
                 (fs/listdir "/home/kitia/bin/gaisr/trainset2/pos/"))
@@ -172,5 +175,58 @@
       (with-out-appender (str odir "temp3.txt")
         (outfn (combine-jsd)))))
 
+  (defn info-content [N probs]
+    (let [probs (merge {\( 0 \) 0 \. 0} probs)]
+      (- (log2 N) (entropy probs))))
 
+  (defn info-content-wt-neighbor
+  "Compares the distribution of base-pairs and gap chars in each
+   column between the wt and 1-mutant neighbor. Takes a seq and
+   neighbors, consensus structure keys and
+   n=number_suboptimal_structures. Returns a list of vectors where
+   each vector is [mutant-name [ith-col jsd(wt,mut) %overlap]]."
+  
+  [wt neighbors cons cons-keys n]
+  (let [wt-probs (map #(probs 1 %) (transpose (fold wt :foldtype "RNAsubopt" :n n)))
+        fun (fn [c ic]
+              [(* (get c \( 0) ic)    ;open height
+               (* (get c \) 0) ic)    ;close height
+               (* (get c \. 0) ic)])  ;gap height
+        ]
+    (pxmap (fn [[nm neighbor]]
+             (let [mut-probs (map #(probs 1 %) (transpose (fold neighbor :foldtype "RNAsubopt" :n n)))
+                   ]
+               ;;find the jsd between the wt col_i and mut col_i
+               (map (fn [i c1 c2]
+                      (let [ic1 (info-content 3 c1)
+                            ic2 (info-content 3 c2)
+                            [openh1 closeh1 gaph1] (fun c1 ic1)
+                            [openh2 closeh2 gaph2] (fun c2 ic2)
+                            ]
+                        [nm [i ic1 openh1 closeh1 gaph1 ic2 openh2 closeh2 gaph2]]))
+                    (iterate inc 0) wt-probs mut-probs)))
+           5
+           neighbors)))
+
+  (io/with-out-writer "/home/kitia/bin/gaisr/robustness/temp.csv" 
+    (let [out foo]
+      (println "mut name,pos,wt info content,wt open height,wt close height,wt gap height,mut info content,mut open height,mut close height,mut gap height")
+                       (doseq [line out]
+                         (doseq [li line
+                                 l li]
+                           (println (str/join "," (flatten l))))
+                         (println ""))
+                         ))
+
+  (def foo 
+    (let [sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
+          {sqs :seqs cons :cons} (read-sto sto :with-names true)
+          cons (change-parens (first cons))]
+      (doall
+       (for [[seqnm s] (take 1 sqs)]
+         (let [[wt st] (remove-gaps s cons)
+               cons-keys (set (keys (struct->matrix st)))
+               n 1000
+               neighbors (into {} (mutant-neighbor wt :with-names true))]
+           (info-content-wt-neighbor wt neighbors st cons-keys n))))))
   )

@@ -2,7 +2,7 @@
  (:require [clojure.contrib.string :as str]
            [clojure.contrib.io :as io]
            [incanter.stats :as stats]
-           ;;[incanter.charts :as charts]
+           [incanter.charts :as charts]
            ;;[clojure.contrib.json :as json]
            [clojure.set :as sets]
            [edu.bc.fs :as fs]
@@ -12,15 +12,16 @@
         edu.bc.utils
         edu.bc.utils.probs-stats
         edu.bc.utils.snippets-math
-        ;;[incanter.core :only (view)]
+        [incanter.core :only (view)]
         smith-waterman
         refold
         [edu.bc.bio.sequtils.snippets-files
          :only (read-sto change-parens sto->randsto)]
         edu.bc.utils.fold-ops
+        invfold
         ))
 
-(def homedir (edu.bc.fs/homedir))
+(def ^{:private true} homedir (edu.bc.fs/homedir))
 
 (defn mutant-neighbor
   "Takes a string s and finds the 3L 1-mer mutants. String can only
@@ -246,8 +247,8 @@
    %overlap for all mutations at a position. Returns a vector of
    average %overlap by position."
 
-  [per-overlaps]
-  (let [[nm data] per-overlaps]
+  [map-of-per-overlaps]
+  (let [[nm data] map-of-per-overlaps]
     (map (fn [ea-seq]
            (let [wt (mean (first ea-seq))
                  ;;merges the 3 mutations at a position and finds the mean
@@ -259,21 +260,55 @@
                                     ;then muts
          data)))
 
-#_(defn chart-overlap-sto
+(defn chart-overlap-sto
   "Takes an entry from the map-of-lists-of-lists-of-maps data
    structure. It calls the overlap-per-seq to find the avarge
    %overlaps at each position. Returns a graph of %overlap for each
    sto. Each line on graph represents 1 sequence from the sto."
 
-  [per-overlaps & {:keys [title]
-                   :or {title "neg RF0555.4"}}]
-  (let [lines (overlap-per-seq per-overlaps)
+  [map-of-per-overlaps & {:keys [title]
+                          :or {title "neg RF0555.4"}}]
+  (let [lines (overlap-per-seq map-of-per-overlaps)
         l (charts/xy-plot (range 200) (first lines) :title title :series 1 :legend true
                           :x-label "position" :y-label "mut % overlap with cons")]
     (view l)
     (map (fn [i y]
            (charts/add-lines l (range 200) y :series-label i))
          (iterate inc 2) (rest lines))))
+
+(defn chart-overlap-sto2
+  "Similar to the chart-overlap-sto except it makes all lines in the
+   chart the same length by adding back the gaps back into the
+   seq. the gaps are the same value (overlap) as the point directly
+   before it. "
+
+  [map-of-per-overlaps & {:keys [title]}]
+  (let [sto (first map-of-per-overlaps)
+        lines (map (fn [original-seq pts-avg]
+                     (loop [os original-seq
+                            pa pts-avg
+                            new-pts-avg []]
+                       (if (seq os)
+                         (if (= (first os) \.) 
+                           (recur (rest os)
+                                  pa
+                                  (conj new-pts-avg (first pa)))
+                           (recur (rest os)
+                                  (rest pa)
+                                  (conj new-pts-avg (first pa))))
+                         new-pts-avg)))
+                   (-> (read-sto sto) :seqs)
+                   (overlap-per-seq map-of-per-overlaps))]
+    (let [l (charts/xy-plot (range 200) (first lines)
+                            :title (or title sto)
+                            :series 1
+                            :legend true
+                            :x-label "position"
+                            :y-label "mut % overlap with cons")]
+      (view l)
+      (map (fn [i y]
+             (charts/add-lines l (range 200) y :series-label i))
+           (iterate inc 2) (rest lines)))))
 
 ;;;---------------------------------------------------
 

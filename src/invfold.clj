@@ -9,7 +9,7 @@
          :only (read-sto change-parens)]
         refold))
 
-(def homedir (fs/homedir))
+(def ^{:private true} homedir (fs/homedir))
 
 (defn- remaining-files [outfile]
   (let [ofile outfile ;storage location
@@ -23,7 +23,7 @@
                                         ;chuncks
          )))
 
-(defn- create-inv-seqs
+(defn create-inv-seqs
   "Generates inverse folded seqs using inverse-fold. If an outfile
    exists, then it will read it in and then add to the existing list
    of seqs. Takes a sequence name(nm), structure (st), n inverse seqs
