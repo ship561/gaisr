@@ -11,7 +11,7 @@
 
 (def ^{:private true} homedir (fs/homedir))
 
-(defn- remaining-files [outfile]
+#_(defn- remaining-files [outfile]
   (let [ofile outfile ;storage location
         fdir (str homedir "/bin/gaisr/trainset2/pos/")
         done-files (when (fs/exists? ofile) (->> (read-string (slurp ofile)) ;read existing data
@@ -22,6 +22,9 @@
          (partition-all 2 ) ;group into manageable
                                         ;chuncks
          )))
+
+(defn- remaining-files [pred]
+  (filter pred (fs/listdir (str homedir "/bin/gaisr/trainset2/pos/"))))
 
 (defn create-inv-seqs
   "Generates inverse folded seqs using inverse-fold. If an outfile
@@ -74,13 +77,28 @@
                      :or {units :s ncore 1}}]
      (let [fdir (str homedir "/bin/gaisr/trainset2/pos/")
            ofile (str homedir "/bin/gaisr/robustness/subopt-robustness-test2.clj")
-           diff (take 100 (remaining-files ofile))
+           done-files (->> (slurp "/home/peis/bin/gaisr/robustness/subopt-robustness-test2.clj") 
+                         read-string 
+                         (into {}))
+           pred (fn [x] (let [outfile (str fdir (str/butlast 3 x) "inv.clj")]
+                         (and (re-find #"\.7\.sto" x) ;subset of data
+                              (not (contains? done-files (keyword x)))
+                              (let [foo (->> (slurp outfile) read-string (into {}))
+                                    bar (map count (vals foo))] 
+                                (or (< (count (keys foo)) 3) ;correct #seqs
+                                    (some #(< % 100) bar)))))) ;correct #invfolds
+           diff (take 100 (remaining-files pred))
            timeout-ms (case units
                             :ms timeout
                             :s (* timeout 1000)
                             :min (* timeout 1000 60)
                             :hr (* timeout 1000 60 60))]
-       (pxmap (fn [instos]
+       (pxmap (fn [insto]
+                (prn "working on file" insto)
+                (create-inv-sto (str fdir insto) nseqs timeout-ms))
+              ncore
+              diff)
+       #_(pxmap (fn [instos]
                 (doall
                  (for [insto instos
                        :let [outfile (str fdir (str/butlast 3 insto) "inv.clj")]

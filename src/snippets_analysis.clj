@@ -41,10 +41,12 @@
 
 (defn jsd-wt-neighbor
   "Compares the distribution of base-pairs and gap chars in each
-   column between the wt and 1-mutant neighbor. Takes a seq and
-   neighbors, consensus structure keys and
+   column between the wt and 1-mutant neighbor. Also computes the
+   basepair distance between the wt and 1-mutant neighbor. Takes a seq
+   and neighbors, consensus structure keys and
    n=number_suboptimal_structures. Returns a list of vectors where
-   each vector is [mutant-name [ith-col jsd(wt,mut) %overlap]]."
+   each vector is [mutant-name [ith-col jsd(wt,mut) %overlap
+   bpdistance]]."
   
   [wt neighbors cons cons-keys n]
   (let [wt-probs (map #(probs 1 %) (transpose (fold wt :foldtype "RNAsubopt" :n n)))]
