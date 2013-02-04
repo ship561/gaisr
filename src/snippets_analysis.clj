@@ -1,11 +1,12 @@
 (ns snippets-analysis
   (:require [clojure.contrib.string :as str]
-           [clojure.contrib.io :as io]
-           [clojure.set :as sets]
-           [edu.bc.fs :as fs]
-           [clojure.data.json :as json])
+            [clojure.contrib.io :as io]
+            [clojure.set :as sets]
+            [edu.bc.fs :as fs]
+            [clojure.core.reducers :as r]
+           )
   (:use robustness
-        [refold :only (remove-gaps)]
+        refold
         edu.bc.utils
         edu.bc.utils.probs-stats
         edu.bc.utils.snippets-math
@@ -13,6 +14,7 @@
          :only (read-sto change-parens sto->randsto)]
         edu.bc.utils.fold-ops))
 
+(def ^{:private true} homedir (fs/homedir))
 
 (defmacro with-out-appender [f & body]
   `(with-open [w# (clojure.java.io/writer ~f :append true)]
@@ -39,10 +41,12 @@
 
 (defn jsd-wt-neighbor
   "Compares the distribution of base-pairs and gap chars in each
-   column between the wt and 1-mutant neighbor. Takes a seq and
-   neighbors, consensus structure keys and
+   column between the wt and 1-mutant neighbor. Also computes the
+   basepair distance between the wt and 1-mutant neighbor. Takes a seq
+   and neighbors, consensus structure keys and
    n=number_suboptimal_structures. Returns a list of vectors where
-   each vector is [mutant-name [ith-col jsd(wt,mut) %overlap]]."
+   each vector is [mutant-name [ith-col jsd(wt,mut) %overlap
+   bpdistance]]."
   
   [wt neighbors cons cons-keys n]
   (let [wt-probs (map #(probs 1 %) (transpose (fold wt :foldtype "RNAsubopt" :n n)))]
@@ -54,18 +58,18 @@
                (map (fn [i c1 c2]
                       [nm [i (jensen-shannon c1 c2) overlap bpdist]])
                     (iterate inc 0) wt-probs mut-probs)))
-           5
+           100
            neighbors)))
 
 (defn driver-jsd-wt-neighbor
   "for purposes of graphing."
   
   [sto]
-  (let [;;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
+  (let [;;sto (str homedir "/bin/gaisr/trainset2/pos/RF00555-seed.1.sto")
         {sqs :seqs cons :cons} (read-sto sto :with-names true)
         cons (change-parens (first cons))
         sto-nm (fs/basename sto)] 
-    (io/with-out-writer "/home/kitia/bin/gaisr/robustness/temp.txt"
+    (io/with-out-writer (str homedir  "/bin/gaisr/robustness/temp.txt")
       (println "sto-name,seq-name,mutname, pos, jsd, overlap, bpdist")
       (doseq [[seq-nm s] sqs]
         (let [[wt st] (remove-gaps s cons)
@@ -83,7 +87,7 @@
    mean(jsd)]."
   
   []
-  (->> (rest (io/read-lines "/home/kitia/bin/gaisr/robustness/temp.txt"))
+  (->> (rest (io/read-lines (str homedir "/bin/gaisr/robustness/temp.txt")))
        (map #(str/split #"," %) )
        ;;merges the jsds for each col with the same mut-name and overlap
        (reduce (fn [m [sto-name seq-name mut-name _ jsd overlap bpdist]]
@@ -116,7 +120,7 @@
    data out to repl for examination."
   
   ([sto]
-     (let [sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
+     (let [sto (str homedir "/bin/gaisr/trainset2/pos/RF00555-seed.1.sto")
            {sqs :seqs cons :cons} (read-sto sto :with-names true)
            cons (change-parens (first cons))]
        (prn sto)
@@ -157,14 +161,12 @@
 
 
 (comment
-  ;;;generates the data for for comparing the subopt overlap and the
-;;;bpdist as well as jsd. generates the data to some output file. Not
-;;;a function but it simply generates the data in csv file format.
+  
   (let [[remaining-file & remaining-files]
         (filter #(re-find #".1.sto" %) 
-                (fs/listdir "/home/kitia/bin/gaisr/trainset2/pos/"))
-        fdir "/home/kitia/bin/gaisr/trainset2/pos/"
-        odir "/home/kitia/bin/gaisr/robustness/"
+                (fs/listdir (str homedir "/bin/gaisr/trainset2/pos/")))
+        fdir (str homedir "/bin/gaisr/trainset2/pos/")
+        odir (str homedir "/bin/gaisr/robustness/")
         outfn (fn [x] (doseq [out x] (println (str/join "," out))))]
     (driver-jsd-wt-neighbor (str fdir remaining-file))
     (io/with-out-writer (str odir "temp3.txt") 

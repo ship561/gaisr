@@ -232,7 +232,7 @@
   [map-of-per-overlaps]
   (reduce (fn [m [k list-lists-maps]]
             (let [list-maps (->> list-lists-maps 
-                                (apply concat) ;combines data from all sequences
+                                (apply concat) ;combines data/lists from all sequences
                                 (apply merge-with +)) ;combines the
                                         ;freqmaps into 1 map
                   avg (double (mean list-maps))

@@ -2,10 +2,11 @@
   :description "GAISR - Genomic Analysis Illuminating Structured RNA"
 
   :jvm-opts ["-Xmx2g"]
-  :main invfold
+  ;;:main invfold
 
   :dependencies [[org.clojure/clojure "1.5.0-beta1"]
                  [mlabs.jars/clojure-contrib "1.2.0-mlab"]
+                 [org.clojure/tools.namespace "0.2.2"]
 
                  [log4j/log4j "1.2.13"] ; base java log4j
 
@@ -52,7 +53,7 @@
                  ]
 
   :dev-dependencies [[jline "0.9.94"]
-                     [mlabs.jars/swank-clojure "1.5.0-sd-mlab-col-hack"]
+                     ;[mlabs.jars/swank-clojure "1.5.0-sd-mlab-col-hack"]
                      ]
 
   :repositories

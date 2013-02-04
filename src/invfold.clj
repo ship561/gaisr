@@ -11,7 +11,16 @@
 
 (def ^{:private true} homedir (fs/homedir))
 
-(defn- remaining-files [outfile]
+(def ^{:private true} fdir (str homedir "/bin/gaisr/trainset2/pos/"))
+
+(def ^{:private true} todo-files
+  (filter #(re-find #"\.7\.sto" %) (fs/listdir fdir))) ;subset of data
+
+(def ^{:private true} done-files
+  (let [ofile (str homedir "/bin/gaisr/robustness/subopt-robustness-test2.clj")]
+    (->> (read-clj ofile) (into {})  keys)))
+
+#_(defn- remaining-files [outfile]
   (let [ofile outfile ;storage location
         fdir (str homedir "/bin/gaisr/trainset2/pos/")
         done-files (when (fs/exists? ofile) (->> (read-string (slurp ofile)) ;read existing data
@@ -23,6 +32,23 @@
                                         ;chuncks
          )))
 
+(defn- read-clj
+  "Reads a clj data structure"
+  
+  [f]
+  (->> (slurp f) read-string ))
+
+(defn- remaining-files
+  "Return a list of files to loop over. files todo and files-ignore
+   are lists of file names. They need to intersect tof files to be
+   removed. Also takes a pred which are usually more specific features
+   of the current run."
+  
+  [pred files-todo files-ignore]
+  (filter #(and pred
+                (not (contains? (set files-ignore) %)))
+          files-todo))
+
 (defn create-inv-seqs
   "Generates inverse folded seqs using inverse-fold. If an outfile
    exists, then it will read it in and then add to the existing list
@@ -30,9 +56,8 @@
    to make, and outfile. Returns the list of sequences."
 
   [nm st n outfile]
-  
   (let [cur-seqs (if (fs/exists? outfile)
-                   (-> outfile slurp read-string)
+                   (read-clj outfile)
                    {nm []})
         cur-n (count (cur-seqs nm))
         inv-seqs (distinct (lazy-cat (cur-seqs nm) (inverse-fold st n :perfect? false)))]
@@ -70,35 +95,31 @@
   "drives the create-inv-sto function by feeding it all the stos of
    interest - mainly the *.7.sto. creates nseqs inverse sequences."
   
-  ([nseqs timeout & {:keys [units ncore]
-                     :or {units :s ncore 1}}]
-     (let [fdir (str homedir "/bin/gaisr/trainset2/pos/")
-           ofile (str homedir "/bin/gaisr/robustness/subopt-robustness-test2.clj")
-           diff (remaining-files ofile)
+  ([todo-files done-files nseqs timeout & {:keys [units ncore]
+                                           :or {units :s ncore 1}}]
+     (let [;;also filter stos that need to be done because they lack
+           ;;the correct number of inverse-seqs
+           pred (fn [x] (let [outfile (str fdir (str/butlast 3 x) "inv.clj")
+                             invseq (->> (read-clj outfile) (into {}))
+                             totalinvseq (map count (vals invseq))] 
+                         (or (< (count (keys invseq)) 3) ;correct #seqs
+                             (some #(< % 100) totalinvseq)))) ;correct #invfolds
+           diff (take 100 (remaining-files pred (map keyword todo-files) done-files))
            timeout-ms (case units
                         :ms timeout
                         :s (* timeout 1000)
                         :min (* timeout 1000 60)
                         :hr (* timeout 1000 60 60))]
-       (pxmap (fn [instos]
-                (doall
-                 (for [insto instos
-                       :let [outfile (str fdir (str/butlast 3 insto) "inv.clj")]
-                       :when (or (not (fs/exists? outfile))
-                                 (< (fs/size outfile) 8000))]
-                   (do (prn "working on file" insto)
-                       (create-inv-sto (str fdir insto) nseqs timeout-ms)))))
+       (pxmap (fn [insto]
+                (prn "working on file" insto)
+                (create-inv-sto (str fdir insto) nseqs timeout-ms))
               ncore
-              (take 5 diff))
+              diff))))
 
-       #_(doall
-        (for [instos (take 5 diff)
-              insto instos
-              :let [outfile (str fdir (str/butlast 3 insto) "inv.clj")]
-              :when (or (not (fs/exists? outfile))
-                        (< (fs/size outfile) 8000))]
-          (do (prn "working on file" insto)
-              (create-inv-sto (str fdir insto) nseqs timeout-ms)))))))
 
 (defn -main [& args]
-  (doall (driver-create-inv 100 10 :units :hr :ncore 5)))
+  (let [[todo done] args
+        todo (or todo todo-files)
+        done (or done done-files)]
+    (doall (driver-create-inv todo done 100 10 :units :hr :ncore 5))))
+
