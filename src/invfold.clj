@@ -45,8 +45,8 @@
    of the current run."
   
   [pred files-todo files-ignore]
-  (filter #(and pred
-                (not (contains? (set files-ignore) %)))
+  (remove #(or (pred %)
+                (contains? (set files-ignore) %))
           files-todo))
 
 (defn create-inv-seqs
@@ -99,11 +99,13 @@
                                            :or {units :s ncore 1}}]
      (let [;;also filter stos that need to be done because they lack
            ;;the correct number of inverse-seqs
-           pred (fn [x] (let [outfile (str fdir (str/butlast 3 x) "inv.clj")
-                             invseq (->> (read-clj outfile) (into {}))
-                             totalinvseq (map count (vals invseq))] 
-                         (or (< (count (keys invseq)) 3) ;correct #seqs
-                             (some #(< % 100) totalinvseq)))) ;correct #invfolds
+           pred (fn [x] (let [outfile (str fdir (str/butlast 3 x) "inv.clj")]
+                         (if (fs/exists? outfile)
+                           (let [invseq (->> (read-clj outfile) (into {}))
+                                 totalinvseq (map count (vals invseq))] 
+                             (and (>= (count (keys invseq)) 3) ;correct #seqs
+                                 (every? #(>= % 100) totalinvseq)))
+                           false))) ;correct #invfolds
            diff (take 100 (remaining-files pred (map keyword todo-files) done-files))
            timeout-ms (case units
                         :ms timeout
