@@ -6,7 +6,7 @@
   (:use [edu.bc.utils :only (pxmap)]
         edu.bc.utils.fold-ops
         [edu.bc.bio.sequtils.snippets-files
-         :only (read-sto change-parens)]
+         :only (read-sto change-parens read-clj)]
         refold))
 
 (def ^{:private true} homedir (fs/homedir))
@@ -18,7 +18,7 @@
 
 (def ^{:private true} done-files
   (let [ofile (str homedir "/bin/gaisr/robustness/subopt-robustness-test2.clj")]
-    (->> (read-clj ofile) (into {})  keys)))
+    (->> (read-clj ofile) (into {})  keys (map str/as-str))))
 
 #_(defn- remaining-files [outfile]
   (let [ofile outfile ;storage location
@@ -32,22 +32,26 @@
                                         ;chuncks
          )))
 
-(defn- read-clj
-  "Reads a clj data structure"
-  
-  [f]
-  (->> (slurp f) read-string ))
-
-(defn- remaining-files
+(defn remaining-files
   "Return a list of files to loop over. files todo and files-ignore
    are lists of file names. They need to intersect tof files to be
    removed. Also takes a pred which are usually more specific features
    of the current run."
   
-  [pred files-todo files-ignore]
+  [pred files-todo & files-ignore]
   (remove #(or (pred %)
                 (contains? (set files-ignore) %))
           files-todo))
+
+(defn enough-inv-seq?
+  [f n]
+  (let [invfile (str (str/butlast 3 f) "inv.clj")]
+    (if (fs/exists? invfile)
+      (let [invseqs (->> (read-clj invfile) (into {}))
+            totalinvseqs (map count (vals invseqs))] 
+        (and (>= (count (keys invseqs)) 3)      ;correct #seqs
+             (every? #(>= % n) totalinvseqs))) ;correct #invfolds
+      false)))
 
 (defn create-inv-seqs
   "Generates inverse folded seqs using inverse-fold. If an outfile
@@ -62,7 +66,7 @@
         cur-n (count (cur-seqs nm))
         inv-seqs (distinct (lazy-cat (cur-seqs nm) (inverse-fold st n :perfect? false)))]
     (if (>= cur-n n)
-      (cur-seqs nm)
+      (cur-seqs nm) ;return n seqs if available
       (do (doall inv-seqs)
           (io/with-out-writer outfile
             (prn (assoc cur-seqs nm (vec inv-seqs))))
@@ -70,9 +74,9 @@
 
 (defn create-inv-sto
   "generates inverse sequences for a sto by calling the
-   create-inv-seqs function. Will timeout after timeout-min is
+   create-inv-seqs function. Will timeout after timeout-ms is
    reached. Input a sto, the number of inverse seqs to generate for
-   each seq in the sto and the timeout in minutes. Returns a vector
+   each seq in the sto and the timeout in milliseconds. Returns a vector
    [sto-name status] at to indicate success."
 
   [insto n timeout-ms]
@@ -99,14 +103,7 @@
                                            :or {units :s ncore 1}}]
      (let [;;also filter stos that need to be done because they lack
            ;;the correct number of inverse-seqs
-           pred (fn [x] (let [outfile (str fdir (str/butlast 3 x) "inv.clj")]
-                         (if (fs/exists? outfile)
-                           (let [invseq (->> (read-clj outfile) (into {}))
-                                 totalinvseq (map count (vals invseq))] 
-                             (and (>= (count (keys invseq)) 3) ;correct #seqs
-                                 (every? #(>= % 100) totalinvseq)))
-                           false))) ;correct #invfolds
-           diff (take 100 (remaining-files pred (map keyword todo-files) done-files))
+           diff (remaining-files #(enough-inv-seq? (str fdir %) 100) todo-files done-files)
            timeout-ms (case units
                         :ms timeout
                         :s (* timeout 1000)
@@ -119,7 +116,14 @@
               diff))))
 
 
-(defn -main [& args]
+(defn -main
+  "args are given as clojure lists. the first arg is todo files and
+   the second is files to ignore. If the ignore file is also in the
+   todo list, then it is removed from the todo list. Creates 100
+   inverse-folded seqs with a timeout of 10hrs using 5 cores. Note the
+   inverse-fold uses 2 cores/seq so :ncore 5 uses 10 cores total."
+
+  [& args]
   (let [[todo done] args
         todo (or todo todo-files)
         done (or done done-files)]

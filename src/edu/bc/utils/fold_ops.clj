@@ -4,6 +4,8 @@
            )
   (:use refold))
 
+(def param-file "/usr/local/ViennaRNA-2.0.0/rna_andronescu2007.par")
+
 (defn inverse-fold
   "Given a target structure, it will use RNAinverse to find n
    sequences which fold into a similar structure. If :perfect? is
@@ -21,7 +23,7 @@
                              (->> ((shell/sh "RNAinverse"
                                              "-Fmp"
                                              (str "-R" n)
-                                             "-P" "/usr/local/ViennaRNA-2.0.0/rna_andronescu2007.par"
+                                             "-P" param-file
                                              :in target)
                                    :out)
                                   str/split-lines
@@ -103,7 +105,7 @@
   (case foldtype
     "mfe"
     (->> ((shell/sh "RNAfold"
-                    "-P" "/usr/local/ViennaRNA-2.0.0/rna_andronescu2007.par"
+                    "-P" param-file
                     "--noPS"
                     :in s)
           :out)

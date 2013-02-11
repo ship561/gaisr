@@ -118,3 +118,9 @@
    :cov (p :cov)
    :filename (p :file)
    :length  (count (first s))}))
+
+(defn read-clj
+  "Reads a clj data structure"
+  
+  [f]
+  (->> (slurp f) read-string ))

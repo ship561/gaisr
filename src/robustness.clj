@@ -16,7 +16,7 @@
         smith-waterman
         refold
         [edu.bc.bio.sequtils.snippets-files
-         :only (read-sto change-parens sto->randsto)]
+         :only (read-sto change-parens sto->randsto read-clj)]
         edu.bc.utils.fold-ops
         invfold
         ))
@@ -43,7 +43,14 @@
                   (keys (dissoc {"A" 1 "G" 1 "U" 1 "C" 1} ;;3 other bases to sub
                                 (subs s i (inc i)))))))))
 
+(defn degap-conskeys
+  "Produces a vector of a degapped seq and structure and corresponding
+   cons-keys. Takes a seq (s) and structure (st)"
 
+  [s st]
+  (let [[s st] (remove-gaps s st)
+        cons-keys (set (keys (struct->matrix st)))]
+    [s st cons-keys]))
 
 ;;;-----------------------------------------------------------------------------
 ;;;
@@ -53,6 +60,8 @@
 ;;;-----------------------------------------------------------------------------
 
 (defn subopt-bpdist-seq
+  "Uses RNAdistance to find the difference between 2 structures"
+  
   [mut-seq cons n]
   (let [substructs (fold mut-seq :foldtype "RNAsubopt" :n n)
         struct-similarity (fn [cons mut-subopt]
@@ -79,8 +88,8 @@
 (defn subopt-overlap-seq
   "Determine the percent overlap of each suboptimal structure of a
   sequence s to the consensus structure. compares against n suboptimal
-  structures.
-  returns a map of frequencies where k=%overlap and v=frequency."
+  structures.  returns a map of frequencies where k=%overlap and
+  v=frequency. average is neutrality"
 
   [s cons-keys n]
   (let [[_ substruct] (suboptimals s n :centroid-only false)]
@@ -127,8 +136,7 @@
       ;;go over each seq in the alignment
       (pxmap
        (fn [[nm s]] 
-         (let [[s st] (remove-gaps s cons)
-               cons-keys (set (keys (struct->matrix st)))]
+         (let [[s st cons-keys] (degap-conskeys s cons)]
            ;;finds 1000 suboptimal structures and
            ;;finds the percent overlap of
            ;;suboptimal structures to the cons struct
@@ -185,7 +193,34 @@
 ;;;-----------------------------------------------------------------------------
 ;;;suboptimal robustness
 ;;;-----------------------------------------------------------------------------
+(defn subopt-robustness-summary
+  "avg-subopt = (subopt-robustness (str fdir insto) n). It is the
+   list-of-lists average subopt overlap of 1-mut
+   structures (neutrality)"
 
+  [avg-subopt]
+  (let [rank (map (fn [[wt & muts]] ;rank each individual sequence
+                    (-> (remove #(< % wt) muts)
+                        count
+                        inc))
+                  (second avg-subopt))
+        [wt & muts]  (-> avg-subopt second transpose)
+        robustness (every? (fn [[wt & muts]] (> wt (stats/mean muts))) (second avg-subopt))]
+    {:wt {:mean (-> wt frequencies mean) :sd (stats/sd wt)}
+     :muts {:mean (-> muts flatten frequencies mean) :sd (-> (map stats/variance muts) stats/mean Math/sqrt)}
+     :rank rank
+     :robust? robustness}))
+
+(defn subopt-robustness-seq
+  "Find the subopt overlap of a seq and all its 1-mutant
+   neighbors. the seq (s) and structure (st) and number of suboptimal
+   structures considered (n) must be given. Returns the neutrality
+   <1-d/L>."
+  
+  [s st n]
+  (let [[s st cons-keys] (degap-conskeys s st)]
+    (-> (map mean (subopt-overlap-neighbors s cons-keys :nsubopt n))
+        stats/mean)))
 
 (defn subopt-robustness
   "Takes an input sto and estimates the significance of the robustness
@@ -205,13 +240,12 @@
         ]
     [sto
      (map (fn [[nm s]]
-            (let [[s st] (remove-gaps s cons)
+            (let [[s st cons-keys] (degap-conskeys s cons)
                   inv-seq (create-inv-seqs nm st n inv-sto) ;vector of n inverse-folded seqs
-                  cons-keys (set (keys (struct->matrix st)))
                   neut (map (fn [x]
                               (subopt-overlap-neighbors x cons-keys :ncore ncore :nsubopt nsubopt))
                             (concat (list s) inv-seq))]
-              ;;average %overlap for each wt and mut
+              ;;average %overlap for each wt and inv-fold seq
               (map (fn [x]
                      (->> x       ;mut composed of 1000 subopt structs
                           (apply merge-with +) ;merge %overlap freqmap
@@ -341,30 +375,22 @@
    than the average average-suboptimal-overlap of all inverse-folded
    seqs. The wt ranking defines the significance."
   
-  [outfile & {:keys [n ncores]
+  [outfile & {:keys [n ncores ignore-files]
       :or {n 10 ncores 2}}]
   (let [ofile outfile ;storage location
         fdir (str homedir "/bin/gaisr/trainset2/pos/")
-        done-files (when (fs/exists? ofile) (->> (read-string (slurp ofile)) ;read existing data
+        done-files (when (fs/exists? ofile) (->> (read-clj ofile) ;read existing data
                                                  (into {})))]
-    (doseq [instos (->> (filter #(and (re-find #"\.7\.sto" %) ;subset of data
-                                      (not (contains? done-files (keyword %)))) ;remove done files
-                                (fs/listdir fdir))
+    (doseq [instos (->> (remaining-files #(not (re-find #"\.7\.sto" %)) (fs/listdir fdir) ignore-files)
                         (partition-all 2 ) ;group into manageable chuncks
-                        (take 1))]
+                        )]
       (let [cur (doall
                  (map (fn [insto]
                         [(keyword insto)
-                         (let [avg-subopt (subopt-robustness (str fdir insto) n) ;list-of-lists average subopt overlap of 1-mut structures
-                               rank (map (fn [[wt & muts]] ;rank each individual sequence
-                                           (-> (remove #(< % wt) muts)
-                                               count
-                                               inc))
-                                         (second avg-subopt))
-                               [wt & muts]  (-> avg-subopt second transpose)]
-                           {:wt (-> wt frequencies mean) :muts (-> muts flatten frequencies mean) :rank rank})])
+                         (-> (subopt-robustness (str fdir insto) n) ;list-of-lists average subopt overlap of 1-mut structures (neutrality)
+                             subopt-robustness-summary)])
                       instos))
-            data (if (fs/exists? ofile) (doall (concat (read-string (slurp ofile)) cur)) cur)]
+            data (if (fs/exists? ofile) (doall (concat (read-clj ofile) cur)) cur)]
         (io/with-out-writer ofile
           (println ";;;generated using main-subopt-robustness. Estimate of the significance of the wild-type sto compared to the inverse folded version.")
           (prn data))))
@@ -388,7 +414,7 @@
               :or {ncores 1 nsamples 1}}]
   (let [ofile outfile ;storage location
         fdir (str homedir "/bin/gaisr/trainset2/pos/")
-        done-files (when (fs/exists? ofile) (->> (read-string (slurp ofile)) ;read existing data
+        done-files (when (fs/exists? ofile) (->> (read-clj ofile) ;read existing data
                                                  (into {})
                                                  ))]
     (doseq [instos (->> (filter #(and (re-find #"\.3\.sto" %) ;subset of data
@@ -401,7 +427,7 @@
                         ;;compare wild type sto against nsample shuffled versions
                         (avg-overlap (subopt-significance (str fdir insto) :ncores ncores :nsamples nsamples))])
                      instos)
-            data (if (fs/exists? ofile) (concat (read-string (slurp ofile)) cur) cur)] ;add new data to existing
+            data (if (fs/exists? ofile) (concat (read-clj ofile) cur) cur)] ;add new data to existing
         (io/with-out-writer ofile
           (println ";;;generated using main-subopt-significance. Estimate of the significance of the wild-type sto compared to the dinucloetide shuffled version.")
           (prn data)) ;write to file

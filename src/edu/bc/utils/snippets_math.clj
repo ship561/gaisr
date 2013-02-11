@@ -17,6 +17,13 @@
                          (* x (Math/sqrt (/ (* -2 (log s)) s)))))))]
     (+ mu (* sigma (norm)))))
 
+(defn sum-map
+  ""
+  [m]
+  (reduce (fn [cur-sum [next-val freq]]
+            (+ cur-sum (* next-val freq)))
+          0 m))
+
 (defn mean
   "Takes a frequency map where k=value and v=frequency. Returns a mean
    for the frequency map"
