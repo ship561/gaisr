@@ -3,7 +3,7 @@
 ;;                 U T I L S . P R O B S - S T A T S                        ;;
 ;;                                                                          ;;
 ;;                                                                          ;;
-;; Copyright (c) 2011-2012 Trustees of Boston College                       ;;
+;; Copyright (c) 2011-2013 Trustees of Boston College                       ;;
 ;;                                                                          ;;
 ;; Permission is hereby granted, free of charge, to any person obtaining    ;;
 ;; a copy of this software and associated documentation files (the          ;;
@@ -24,7 +24,7 @@
 ;; OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION    ;;
 ;; WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.          ;;
 ;;                                                                          ;;
-;; Author: Jon Anthony                                                      ;;
+;; Author: Jon Anthony & Shermin Pei                                        ;;
 ;;                                                                          ;;
 ;;--------------------------------------------------------------------------;;
 ;;
@@ -269,6 +269,184 @@
   [n colls &
    {par :par :or {par 1}}]
   (cc-freqs&probs n colls combins-freqs-probs :par par))
+
+
+(defn- mean-freq-map
+  "Helper for mean when it is passed a frequency map with keys numbers"
+  [m]
+  (let [[n d] (reduce (fn [v [val n]]
+                        [(+ (first v) (* val n))
+                         (+ (second v) n)])
+                      [0 0] m)]
+    (/ n d)))
+
+(defn num-key-freq-map?
+  "Returns true if X a number keyed frequency map"
+  [x]
+  (and (map? x) (number? (ffirst x))))
+
+(defn pair-coll?
+  "Returns true if X is a collection of number pairs."
+  [x]
+  (or (num-key-freq-map? x)
+      (and (sequential? (first x))
+           (number? (ffirst x)))))
+
+(defn flatten-pair-coll
+  "COLL is a collection of pairs [v w] where v is a value and w its
+   weight. For maps, keys are vs and values are ws.  Returns a lazy
+   seq of of the expansions as a single collection, with w repetitions
+   of v for each such [v w] pair.
+  "
+  [coll] ;m {4 1 2 1 3 1 1 1}
+  (mapcat (fn[[v w]] (repeat w v)) coll))
+
+
+(defn mean
+  "Compute the expectaion of the collection COLL.  If coll is a number
+   keyed frequency map, computes as if seq of expansion of keys
+   weighted by frequency.  If coll is a simple map use (vals coll).
+   Also coll can be a collection of pairs [n w], where w is the weight
+   to assign to n.  Lastly, if single numbers are given, their weight
+   is taken as simply 1.  Effectively returns:
+
+     let c* (flattened-weighted-seq coll)
+         cnt (count c*)
+       (/ (sum c*) cnt)
+
+   But without computing actual weighted sequence c*.
+  "
+  ([coll]
+     (double
+      (if (pair-coll? coll)
+        (mean-freq-map coll)
+        (let [coll (if (map? coll) (vals coll) coll)]
+          (/ (sum coll)
+             (count coll))))))
+  ([x & xs]
+     (mean (cons x xs))))
+
+(defn median
+  "Compute the median of the given collection COLL.  If coll is a
+   collection of number pairs [v w], where w is the weight for v,
+   effectively computes its median based on expansion of keys weighted
+   by frequency.  This includes frequency maps where keys are numbers
+   and values are their weights.  If coll is a simple map computes the
+   median of (vals coll).
+  "
+  ([coll]
+     (if (pair-coll? coll)
+       (median (flatten-pair-coll coll))
+       (let [coll (if (map? coll) (vals coll) coll)
+             cnt (count coll)
+             cnt2 (/ cnt 2)
+             v (vec (sort coll))]
+         (if (even? cnt)
+           (/ (+ (v (dec cnt2)) (v cnt2)) 2.0)
+           (v (math/floor cnt2))))))
+  ([x & xs]
+     (median (cons x xs))))
+
+
+(defn variance
+  "Compute the variance of the collection COLL.  If coll is a map
+   use (vals coll).  Returns average of squared differences of xs in
+   coll with 'mean' of coll.  The functions distfn and avgfn are used
+   for distances of points in coll and the averaging function.  Or,
+   the 'mean' can be given explicitly as M.  The single parameter case
+   uses '-' as distfn and 'mean' as avgfn.
+  "
+  ([coll]
+     ;; Uses Var(X) = E(sqr X) - (sqr E(X))
+     (- (if (pair-coll? coll)
+          (mean (reduce (fn [m [v w]] (assoc m (sqr v) w)) {} coll))
+          (mean (map sqr coll)))
+        (sqr (mean coll))))
+  ([coll & {:keys [distfn avgfn m] :or {distfn - avgfn mean}}]
+     (let [coll (if (map? coll) (vals coll) coll)
+           m (if m m (avgfn coll))]
+       (mean (map #(sqr (distfn % m)) coll)))))
+
+(defn avg-variance
+  "Compute the average of the n variances for the n samples in
+   SAMPLE-SET.  This is not as obvious as it may at first seem.  It is
+   _not_ the mean of the variances of each sample.  The correct
+   averaging is the average of the weighted variances of each sample,
+   where the weighting is the sample size:
+
+   (/ (sum (fn[Si] (dec (count Si)) (variance Si)) sample-set)
+      (- (sum count sample-set) (count sample-set)))
+
+   This does reduce to the mean of the variances if the samples are
+   all of the same size, but this is often (typically?) not the case.
+
+   DISTFN and AVGFN are as for the function variance (for which, see)
+  "
+  ([sample-set]
+     (/ (sum (fn[Si]
+               (* (dec (count Si))
+                  (variance Si)))
+             sample-set)
+        (- (sum count sample-set)
+           (count sample-set))))
+  ([sample-set & {:keys [distfn avgfn m] :or {distfn - avgfn mean}}]
+     (/ (sum (fn[Si]
+               (* (dec (count Si))
+                  (variance Si :distfn distfn :avgfn avgfn)))
+             sample-set)
+        (- (sum count sample-set)
+           (count sample-set)))))
+
+(defn covariance
+  "" [PX PY]
+  (let [getvs (fn[X] (cond (pair-coll? X) (flatten-pair-coll X)
+                           (map? X) (vals X)
+                           :else X))
+        xs (getvs PX)
+        ys (getvs PY)
+        cnt (count xs)]
+    (if (not= cnt (count ys))
+      (raise :type :invalid-oper
+             :msg "Covariance of X & Y requires = size sample sets"
+             :X PX :Y PY)
+      (let [mux (mean xs)
+            muy (mean ys)]
+        (double (/ (sum (fn[xi yi] (* (- xi mux) (- yi muy)))
+                        :|| xs ys)
+                   cnt))))))
+
+
+
+
+(defn std-deviation
+  "Compute the standard deviation of collection COLL.  If coll is a
+   map uses (vals coll).  Returns the sqrt of the variance of
+   coll. The functions distfn and avgfn are used for distances of
+   points in coll and the averaging function for the mean of
+   coll. These are used to compute the variance, or if V is given it
+   is taken as the variance and variance computation is skipped.  For
+   the single parameter case, distfn is '-' and avgfn is 'mean'.
+  "
+  ([coll]
+     (math/sqrt (variance coll)))
+  ([coll & {:keys [distfn avgfn v] :or {distfn - avgfn mean}}]
+     (math/sqrt (if v v (variance coll :distfn distfn :avgfn avgfn)))))
+
+(defn avg-std-deviation
+  "Compute the average of the n standard deviations for the n samples
+   in SAMPLE-SET.  This is not as obvious as it may at first seem.  It
+   is _not_ the mean of the stdevs of each sample.  The correct
+   averaging is the sqrt of the average of the weighted variances of
+   each sample, where the weighting is the sample size.  This latter
+   is given by avg-variance (see its documentation for details).  So,
+   we return:
+
+   (sqrt (avg-variance sample-set))
+   "
+  ([sample-set]
+     (math/sqrt (avg-variance sample-set)))
+  ([sample-set {:keys [distfn avgfn v] :or {distfn - avgfn mean}}]
+     (math/sqrt (avg-variance sample-set :distfn distfn :avgfn avgfn))))
 
 
 (defn joint-prob-x

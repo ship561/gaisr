@@ -481,12 +481,14 @@
 
 
 (defn entry-file->fasta-file
-  [efile]
+  [efile & {:keys [names-only]}]
   (let [efile (fs/fullpath efile)
         fasta-filespec (fs/fullpath (fs/replace-type efile ".fna"))
-        entries (io/read-lines efile)]
+        entseqs (if names-only
+                  (read-seqs efile :info :both)
+                  (gen-name-seq-pairs (io/read-lines efile)))]
     (io/with-out-writer fasta-filespec
-      (doseq [[entry sq] (gen-name-seq-pairs entries)]
+      (doseq [[entry sq] entseqs]
         (println (str ">" entry))
         (println sq)))
     fasta-filespec))
@@ -563,7 +565,7 @@
    and data.
 
    Impl Note: while this almost begs for multimethods, that would
-   actually increase the complexity as it would mean 8 methods to
+   actually increase the complexity as it would mean 14 methods to
    cover the cases...
   "
   [type info]
@@ -578,13 +580,13 @@
 
           "sto"
           (if (= info :data)
-            #(str/replace-re #"^(N[CZ_0-9]+|[A-Za-z0-9._/-]+)\s+" "" %)
-            #(second (re-find  #"^(N[CZ_0-9]+|[A-Za-z0-9._/-]+)\s+" %)))
+            #(str/replace-re #"^(N[CZ_0-9]+|[A-Za-z0-9._/-]+)[,\s]+" "" %)
+            #(second (re-find  #"^(N[CZ_0-9]+|[A-Za-z0-9._/-]+)[,\s]+" %)))
 
           "ent"
           (if (= info :data)
             #(second (gen-name-seq %))
-            #(->> (str/split #"( |/)" %) (str/join "/")))
+            #(->> (str/split #"([\s,]|/)" %) (take 3) (str/join "/")))
           ;;#(first (gen-name-seq %)))
 
           "gma" (raise :type :NYI :info "GMA format not yet implemented")
@@ -595,9 +597,9 @@
             #(re-find #"[A-Za-z0-9._/-]+" (first %))))))
 
 (defn read-seqs
-  "Read the sequences in FILESPEC and return set as a lazy
-  (Clojure!) seq.  Filespec can denote either a fna, aln, sto, or gma
-  file format file.
+  "Read the sequences in FILESPEC and return set as a lazy (Clojure!)
+   seq.  Filespec can denote either a fna, fa, hitfna, aln, sto, or
+   gma file format file.
   "
   [filespec & {info :info :or {info :data}}]
   (let [type (fs/ftype filespec)
