@@ -11,7 +11,7 @@
         edu.bc.utils.probs-stats
         edu.bc.utils.snippets-math
         [edu.bc.bio.sequtils.snippets-files
-         :only (read-sto change-parens sto->randsto)]
+         :only (read-sto change-parens sto->randsto read-clj)]
         edu.bc.utils.fold-ops))
 
 (def ^{:private true} homedir (fs/homedir))
@@ -30,7 +30,10 @@
     (helper (clojure.java.io/reader file))))
 
 
-
+(defn GC-content [s]
+  (let [pr (probs 1 s)]
+    (+ (get pr \C 0)
+       (get pr \G 0))))
 ;;;-----------------------------------------------------------------------------
 ;;;
 ;;;analytics for robustness.clj. trying to establish the average

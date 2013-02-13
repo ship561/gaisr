@@ -45,11 +45,12 @@
 
 (defn enough-inv-seq?
   [f n]
-  (let [invfile (str (str/butlast 3 f) "inv.clj")]
+  (let [invfile (str (str/butlast 3 f) "inv.clj")
+        cnt-seqs (-> (read-sto f) :seqs count)]
     (if (fs/exists? invfile)
       (let [invseqs (->> (read-clj invfile) (into {}))
             totalinvseqs (map count (vals invseqs))] 
-        (and (>= (count (keys invseqs)) 3)      ;correct #seqs
+        (and (>= (count (keys invseqs)) cnt-seqs)      ;correct #seqs
              (every? #(>= % n) totalinvseqs))) ;correct #invfolds
       false)))
 
