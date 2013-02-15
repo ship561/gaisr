@@ -1,7 +1,7 @@
 (ns robustness
  (:require [clojure.contrib.string :as str]
            [clojure.contrib.io :as io]
-           [incanter.stats :as stats]
+           ;;[incanter.stats :as stats]
            [incanter.charts :as charts]
            ;;[clojure.contrib.json :as json]
            [clojure.set :as sets]
@@ -11,7 +11,7 @@
         edu.bc.bio.sequtils.files
         edu.bc.utils
         edu.bc.utils.probs-stats
-        edu.bc.utils.snippets-math
+        [edu.bc.utils.snippets-math :only (pearsonsCC median-est)]
         [incanter.core :only (view)]
         smith-waterman
         refold
@@ -205,9 +205,9 @@
                         inc))
                   (second avg-subopt))
         [wt & muts]  (-> avg-subopt second transpose)
-        robustness (every? (fn [[wt & muts]] (> wt (stats/mean muts))) (second avg-subopt))]
-    {:wt {:mean (-> wt frequencies mean) :sd (stats/sd wt)}
-     :muts {:mean (-> muts flatten frequencies mean) :sd (-> (map stats/variance muts) stats/mean Math/sqrt)}
+        robustness (every? (fn [[wt & muts]] (> wt (mean muts))) (second avg-subopt))]
+    {:wt {:mean (-> wt frequencies mean) :sd (sd wt)}
+     :muts {:mean (-> muts flatten frequencies mean) :sd (-> (map variance muts) mean Math/sqrt)}
      :rank rank
      :robust? robustness}))
 
@@ -220,7 +220,7 @@
   [s st n]
   (let [[s st cons-keys] (degap-conskeys s st)]
     (-> (map mean (subopt-overlap-neighbors s cons-keys :nsubopt n))
-        stats/mean)))
+        mean)))
 
 (defn subopt-robustness
   "Takes an input sto and estimates the significance of the robustness
@@ -930,7 +930,21 @@
             (prn i)))))))
 
 
-
+(let [fdir "/home/kitia/bin/gaisr/trainset2/pos/"
+                  invseqs (filter #(re-find #"\.inv.clj" %) (fs/listdir fdir))
+                  stos (map #(str (str/butlast 7 %) "sto") invseqs)
+                  foo (map (fn [sto invseq]
+                             (let [sto-seq (->> (read-sto (str fdir sto) :with-names true) :seqs (into {}))
+                                   inv-seqs (->> (read-clj (str fdir invseq)) (into {}))]
+                               (vec (cons sto 
+                                          (for [[nm s] sto-seq] 
+                                            (cons (GC-content (str/replace-re #"\." "" s))
+                                                  (map GC-content (get inv-seqs nm))))))))
+                           stos invseqs)]
+              (prn (count foo))(->> (drop 11 foo)
+                   first
+                   rest
+                   (map #(view (charts/histogram %)) )))
 
 
 

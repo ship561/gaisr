@@ -317,12 +317,13 @@
    But without computing actual weighted sequence c*.
   "
   ([coll]
-     (double
-      (if (pair-coll? coll)
-        (mean-freq-map coll)
-        (let [coll (if (map? coll) (vals coll) coll)]
-          (/ (sum coll)
-             (count coll))))))
+     (if (empty? coll) nil
+         (double
+          (if (pair-coll? coll)
+            (mean-freq-map coll)
+            (let [coll (if (map? coll) (vals coll) coll)]
+              (/ (sum coll)
+                 (count coll)))))))
   ([x & xs]
      (mean (cons x xs))))
 
@@ -431,6 +432,11 @@
      (math/sqrt (variance coll)))
   ([coll & {:keys [distfn avgfn v] :or {distfn - avgfn mean}}]
      (math/sqrt (if v v (variance coll :distfn distfn :avgfn avgfn)))))
+
+(defn sd
+  "Synonym for standard deviation"
+  [& args]
+  (apply std-deviation args))
 
 (defn avg-std-deviation
   "Compute the average of the n standard deviations for the n samples

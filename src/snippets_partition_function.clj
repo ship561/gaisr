@@ -23,8 +23,8 @@
 
 (defn Z
   "Calculates the partition function for a structure (from sequence S)
-  from i (starts at 0) to j. Functions based on Z(1,n) = Z(1,n-1) +
-  Zb(1,n) + sum(Z(1,k-1)*Zb(k,n) for 1<k<n) where Zb(1,n) =
+  from i (starts at 0) to j. Functions based on Nussinov Z(1,n) =
+  Z(1,n-1) + Zb(1,n) + sum(Z(1,k-1)*Zb(k,n) for 1<k<n) where Zb(1,n) =
   exp(-a(1,n)/RT)*Z(2,n-1) and Zb(k,n)=exp(-a(k,n)/RT)*Z(k+1,n-1)
 
   The probability of a base pair i,j occuring is given by:

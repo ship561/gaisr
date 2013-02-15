@@ -24,58 +24,6 @@
             (+ cur-sum (* next-val freq)))
           0 m))
 
-(defn mean
-  "Takes a frequency map where k=value and v=frequency. Returns a mean
-   for the frequency map"
-  
-  [m]
-  (let [[n d] (reduce (fn [v [val n]]
-                        [(+ (first v) (* val n))
-                         (+ (second v) n)])
-                      [0 0] m)]
-    (/ n d)))
-
-(defn variance
-  "Takes a frequency map where k=value and v=frequency. Returns
-   variance for the frequency map."
-
-  [m]
-  (let [sumsq (mean (reduce (fn [m [val n]]
-                              (assoc m (* val val) n))
-                            {} m))
-        mu (mean m)]
-    (- sumsq (* mu mu))))
-
-(defn sd
-  "Takes a frequency map where k=value and v=frequency. Returns
-   standard deviation for the frequency map."
-  
-  [m]
-  (Math/sqrt (variance m)))
-
-(defn freqn->list
-  "Takes a frequency map and makes a list of it so that the values (x)
-   are represented n-times in the list. List can then be used to find
-   summary statistics."
-
-  [m]
-  (flatten (map (fn[[x n]] (repeat n x)) m)))
-
-(defn median
-  "Takes a frequency map where k=value and v=frequency. Returns median
-   for the frequency map."
-  
-  [m]
-  (let [;m {4 1 2 1 3 1 1 1}
-        m (->> m freqn->list sort vec) ;turns freqmap into list then
-                                       ;sorts and changes into a vector
-        c (count m)]
-    (if (odd? c)
-      (m (int (/ c 2))) ;choose middle value of list
-      (mean [[(m (int (dec (/ c 2)))) 1] ;average of 2 middle terms
-             [(m (int (/ c 2))) 1]])
-    )))
-
 (defn median-est
   "Takes a frequency map where k=value and v=frequency. Returns and
    estimate of the median for the frequency map."
