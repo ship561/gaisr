@@ -65,13 +65,13 @@
                    (read-clj outfile)
                    {nm []})
         cur-n (count (cur-seqs nm))
-        inv-seqs (distinct (lazy-cat (cur-seqs nm) (inverse-fold st n :perfect? false)))]
-    (if (>= cur-n n)
-      (cur-seqs nm) ;return n seqs if available
+        inv-seqs (distinct (lazy-cat (cur-seqs nm)
+                                     (inverse-fold st n :perfect? false)))]
+    (when (< cur-n n)
       (do (doall inv-seqs)
           (io/with-out-writer outfile
-            (prn (assoc cur-seqs nm (vec inv-seqs))))
-          (take n inv-seqs)))))
+            (prn (assoc cur-seqs nm (vec inv-seqs))))))
+    (take n inv-seqs)))
 
 (defn create-inv-sto
   "generates inverse sequences for a sto by calling the
@@ -125,7 +125,7 @@
    inverse-fold uses 2 cores/seq so :ncore 5 uses 10 cores total."
 
   [& args]
-  (let [[todo done] args
+  (let [[todo & done] args
         todo (or todo todo-files)
         done (or done done-files)]
     (doall (driver-create-inv todo done 100 10 :units :hr :ncore 5))))
