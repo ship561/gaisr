@@ -15,6 +15,9 @@
                  [mlabs.jars/clojure-csv "1.3.0-mlab"]
                  [clj-shell "0.1.0"]
 
+                 ;;command line options
+                 [org.clojure/tools.cli "0.2.2"]
+
                  [org.clojure.contrib/macro-utils "1.3.0-alpha4"]
                  [org.clojure/tools.macro "0.1.1"]
                  

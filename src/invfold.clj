@@ -7,7 +7,8 @@
         edu.bc.utils.fold-ops
         [edu.bc.bio.sequtils.snippets-files
          :only (read-sto change-parens read-clj)]
-        refold))
+        refold
+        [clojure.tools.cli :only [cli]]))
 
 (def ^{:private true} homedir (fs/homedir))
 
@@ -38,18 +39,18 @@
    removed. Also takes a pred which are usually more specific features
    of the current run."
   
-  [pred files-todo & files-ignore]
+  [pred files-todo files-ignore]
   (remove #(or (pred %)
-                (contains? (set files-ignore) %))
+               (contains? (set files-ignore) %))
           files-todo))
 
 (defn enough-inv-seq?
   [f n]
-  (let [invfile (str (str/butlast 3 f) "inv.clj")
-        cnt-seqs (-> (read-sto f) :seqs count)]
+  (let [invfile (str (str/butlast 3 f) "inv.clj")]
     (if (fs/exists? invfile)
       (let [invseqs (->> (read-clj invfile) (into {}))
-            totalinvseqs (map count (vals invseqs))] 
+            totalinvseqs (map count (vals invseqs))
+            cnt-seqs (-> (read-sto f) :seqs count)] 
         (and (>= (count (keys invseqs)) cnt-seqs)      ;correct #seqs
              (every? #(>= % n) totalinvseqs))) ;correct #invfolds
       false)))
@@ -104,7 +105,7 @@
                                            :or {units :s ncore 1}}]
      (let [;;also filter stos that need to be done because they lack
            ;;the correct number of inverse-seqs
-           diff (remaining-files #(enough-inv-seq? (str fdir %) 100) todo-files done-files)
+           diff (remaining-files #(enough-inv-seq? (str fdir %) nseqs) todo-files done-files)
            timeout-ms (case units
                         :ms timeout
                         :s (* timeout 1000)
@@ -125,8 +126,13 @@
    inverse-fold uses 2 cores/seq so :ncore 5 uses 10 cores total."
 
   [& args]
-  (let [[todo & done] args
-        todo (or todo todo-files)
-        done (or done done-files)]
-    (doall (driver-create-inv todo done 100 10 :units :hr :ncore 5))))
+  (let [parse (fn [s] (->> (str/split #" " s) vec))
+        [opts _ usage] (cli args
+                            ["-t" "--todo" "files todo" :parse-fn parse :default todo-files]
+                            ["-d" "--done" "files done" :parse-fn parse :default done-files])
+        {todo :todo done :done} opts]
+    (prn :todo todo :done done)
+    (if args
+      (doall (driver-create-inv todo done 100 10 :units :hr :ncore 5))
+      (print usage))))
 
