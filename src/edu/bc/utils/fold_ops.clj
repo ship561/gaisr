@@ -1,10 +1,13 @@
 (ns edu.bc.utils.fold-ops
   (:require [clojure.contrib.string :as str]
-           [clojure.java.shell :as shell]
-           )
+            [clojure.java.shell :as shell]
+            [edu.bc.fs :as fs])
   (:use refold))
 
-(def param-file "/usr/local/ViennaRNA-2.0.0/rna_andronescu2007.par")
+(def param-file (let [viennadir (if (fs/directory? "/usr/local/ViennaRNA/")
+                                  "/usr/local/ViennaRNA/" 
+                                  (str (fs/homedir) "/bin/ViennaRNA")) ]
+                  (str viennadir "rna_andronescu2007.par")))
 
 (defn inverse-fold
   "Given a target structure, it will use RNAinverse to find n

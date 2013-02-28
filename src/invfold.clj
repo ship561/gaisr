@@ -119,20 +119,22 @@
 
 
 (defn -main
-  "args are given as clojure lists. the first arg is todo files and
-   the second is files to ignore. If the ignore file is also in the
-   todo list, then it is removed from the todo list. Creates 100
-   inverse-folded seqs with a timeout of 10hrs using 5 cores. Note the
-   inverse-fold uses 2 cores/seq so :ncore 5 uses 10 cores total."
+  "args are given as 1 string on the command line with respect to the
+   flags. If the ignore file is also in the todo list, then it is
+   removed from the todo list. Creates nseq (100) inverse-folded seqs
+   with a timeout of 10hrs using 5 cores. Note the inverse-fold uses 2
+   cores/seq so :ncore 5 uses 10 cores total."
 
   [& args]
   (let [parse (fn [s] (->> (str/split #" " s) vec))
         [opts _ usage] (cli args
                             ["-t" "--todo" "files todo" :parse-fn parse :default todo-files]
-                            ["-d" "--done" "files done" :parse-fn parse :default done-files])
-        {todo :todo done :done} opts]
-    (prn :todo todo :done done)
-    (if args
-      (doall (driver-create-inv todo done 100 10 :units :hr :ncore 5))
+                            ["-d" "--done" "files done" :parse-fn parse :default done-files]
+                            ["-n" "--nseqs" "number of inverse seqs to create" :default 100]
+                            ["-h" "--help" "usage" :default nil :flag true])
+        {todo :todo done :done nseqs :nseqs} opts]
+    (if (or args
+            (opts :help))
+      (doall (driver-create-inv todo done nseqs 10 :units :hr :ncore 5))
       (print usage))))
 
