@@ -1,5 +1,5 @@
 (ns edu.bc.utils.fold-ops
-  (:require [clojure.contrib.string :as str]
+  (:require [clojure.string :as str]
             [clojure.java.shell :as shell]
             [edu.bc.fs :as fs])
   (:use refold))
@@ -107,7 +107,7 @@
         :or {foldtype "mfe" n 10000}}]
   (case foldtype
     "mfe"
-    (->> ((shell/sh "RNAfold"
+    (-> ((shell/sh "RNAfold"
                     "-P" param-file
                     "--noPS"
                     :in s)

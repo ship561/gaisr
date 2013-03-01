@@ -1,24 +1,24 @@
 (ns robustness
- (:require [clojure.contrib.string :as str]
-           [clojure.contrib.io :as io]
-           ;;[incanter.stats :as stats]
-           [incanter.charts :as charts]
-           ;;[clojure.contrib.json :as json]
-           [clojure.set :as sets]
-           [edu.bc.fs :as fs]
-           )
-  (:use edu.bc.bio.seq-utils
+  (:require [edu.bc.fs :as fs]
+            [clojure.contrib.string :as str]
+            [clojure.contrib.io :as io]
+            ;;[incanter.stats :as stats]
+            [incanter.charts :as charts]
+            ;;[clojure.contrib.json :as json]
+            [clojure.set :as sets])
+  (:use [clojure.tools.cli :only [cli]]
+        edu.bc.bio.seq-utils
         edu.bc.bio.sequtils.files
         edu.bc.utils
         edu.bc.utils.probs-stats
-        [edu.bc.utils.snippets-math :only (pearsonsCC median-est)]
-        [incanter.core :only (view)]
-        smith-waterman
-        refold
+        [edu.bc.utils.snippets-math :only (median-est)]
         [edu.bc.bio.sequtils.snippets-files
          :only (read-sto change-parens sto->randsto read-clj)]
         edu.bc.utils.fold-ops
+        [incanter.core :only (view)]
         invfold
+        refold
+        smith-waterman
         ))
 
 (def ^{:private true} homedir (edu.bc.fs/homedir))
@@ -88,8 +88,10 @@
 (defn subopt-overlap-seq
   "Determine the percent overlap of each suboptimal structure of a
   sequence s to the consensus structure. compares against n suboptimal
-  structures.  returns a map of frequencies where k=%overlap and
-  v=frequency. average is neutrality"
+  structures.  returns a frequency map where k=%overlap and
+  v=frequency.
+
+  average is neutrality"
 
   [s cons-keys n]
   (let [[_ substruct] (suboptimals s n :centroid-only false)]
@@ -271,8 +273,8 @@
                                 (apply concat) ;combines data/lists from all sequences
                                 (apply merge-with +)) ;combines the
                                         ;freqmaps into 1 map
-                  avg (double (mean list-maps))
-                  sd (double (sd list-maps))
+                  avg (mean list-maps)
+                  sd (sd list-maps)
                   med (double (median-est list-maps))]
               (assoc m k {:med med :mean avg :sd sd})))
           {} map-of-per-overlaps))
@@ -313,13 +315,21 @@
          (iterate inc 2) (rest lines))))
 
 (defn chart-overlap-sto2
-  "Similar to the chart-overlap-sto except it makes all lines in the
-   chart the same length by adding back the gaps back into the
-   seq. the gaps are the same value (overlap) as the point directly
-   before it. "
+  "Similar to the chart-overlap-sto except it makes a data structure
+   which contains the percent overlap at each point. The lengths are
+   the same by adding back the gaps back into the seq. The gaps are
+   the same value (overlap) as the point directly before it. It will
+   either print out in csv format to a file specified (outcsv) or just
+   return the vector-of-lists where each list contains the percent
+   overlap of each point.
 
-  [map-of-per-overlaps & {:keys [title]}]
+  Once the csv is created, it can be graphed using
+  robustness/chart-overlap-sto.R In R, first source the file then
+  'makechart(file)' to execute to produce a graph."
+
+  [map-of-per-overlaps & {:keys [outcsv]}]
   (let [sto (first map-of-per-overlaps)
+        seq-names (map first (-> (read-sto sto :with-names true) :seqs))
         lines (map (fn [original-seq pts-avg]
                      (loop [os original-seq
                             pa pts-avg
@@ -334,17 +344,15 @@
                                   (conj new-pts-avg (first pa))))
                          new-pts-avg)))
                    (-> (read-sto sto) :seqs)
-                   (overlap-per-seq map-of-per-overlaps))]
-    (let [l (charts/xy-plot (range 200) (first lines)
-                            :title (or title sto)
-                            :series 1
-                            :legend true
-                            :x-label "position"
-                            :y-label "mut % overlap with cons")]
-      (view l)
-      (map (fn [i y]
-             (charts/add-lines l (range 200) y :series-label i))
-           (iterate inc 2) (rest lines)))))
+                   (overlap-per-seq map-of-per-overlaps))
+        linecsv (map (fn [nm v]
+                       (str/join "," (cons nm v)))
+                     seq-names lines)]
+    (if outcsv
+      (io/with-out-writer outcsv
+        (println (str/join "," (->> lines first count range (cons "name"))))
+        (doseq [x linecsv] (println x)))
+      lines)))
 
 ;;;---------------------------------------------------
 
@@ -355,19 +363,46 @@
   "Main function for determining neutrality of all sequences and their
   1-mutant neighbors by finding the percent overlap between the
   consensus structure and its suboptimal structures.
-  :pos is a boolean."
+  args are provided in a vector of [\"-flag\" value].
 
-  [& {:keys [pos]
-      :or {pos true}}]
-  (let [fdir (str homedir "/bin/gaisr/trainset2/"
-                  (if :pos "pos/" "neg/"))
-        fsto (filter #(re-find #"\.sto" %) (fs/listdir fdir))]
+  ex
+  (main-subopt-overlap \"-f\" \"/home/kitia/bin/gaisr/trainset2/pos/RF00167-seed.3.sto\")"
+
+  [& args]
+  (let [[opts _ usage] (cli args
+                            ["-f" "--file" "file(s) to check neutrality for"
+                             :parse-fn #(str/split #" " %) ;create list of files
+                             :default nil]
+                            ["-p" "--pos" "check only positive training files" :default nil :flag true]
+                            ["-n" "--neg" "check only negative training files" :default nil :flag true]
+                            ["-d" "--debug" "debug using (take 3 (filter #(re-seq #\"RF00555-seed\" %) fsto))"
+                             :default nil :flag true]
+                            ["-h" "--help" "usage" :default nil :flag true])
+        fdir (str homedir "/bin/gaisr/trainset2/"
+                  (cond
+                   (opts :pos) "pos/"
+                   (opts :neg) "neg/"))
+        fsto (or (opts :file)
+                 (filter #(re-find #"\.sto" %) (fs/listdir fdir)))
+        stos (if (opts :debug)
+               (take 3 (filter #(re-seq #"RF00555-seed" %) fsto))
+               fsto)]
     (doall
      ;;go over each sto in the dir provided
-     (for [sto (take 3 (filter #(re-seq #"RF00555-seed" %) fsto))]
-       (subopt-overlap-sto sto)
-       ))))
+     (for [sto stos]
+       (subopt-overlap-sto sto)))))
 
+(def ^{:private true} banner
+  (let [parse (fn [s] (-> (str/split #" " s) vec))]
+    [["-f" "--file" "REQUIRED. file(s) to check neutrality for"
+      :parse-fn parse ;create list of files
+      :default nil]
+     ["-i" "--ignore" "file(s) to ignore" :parse-fn parse :default nil]
+     ["-o" "--outfile" "REQUIRED. file to write to" :default nil]
+     ["-n" "--nseqs" "number of inverse seqs to create" :default 100]
+     ["-nc" "--ncores" "number of cores to use" :default 2]
+     ["-h" "--help" "usage" :default nil :flag true]]))
+  
 (defn main-subopt-robustness
   "Driver function for subopt-robustness. Takes input sto file and n
    inverse-folded structures. Compares the average
@@ -377,26 +412,29 @@
    than the average average-suboptimal-overlap of all inverse-folded
    seqs. The wt ranking defines the significance."
   
-  [outfile & {:keys [n ncores ignore-files]
-      :or {n 10 ncores 2}}]
-  (let [ofile outfile ;storage location
-        fdir (str homedir "/bin/gaisr/trainset2/pos/")
-        done-files (when (fs/exists? ofile) (->> (read-clj ofile) ;read existing data
-                                                 (into {})))]
-    (doseq [instos (->> (remaining-files #(not (re-find #"\.7\.sto" %)) (fs/listdir fdir) ignore-files)
-                        (partition-all 2 ) ;group into manageable chuncks
-                        )]
-      (let [cur (doall
-                 (map (fn [insto]
-                        [(keyword insto)
-                         (-> (subopt-robustness (str fdir insto) n) ;list-of-lists average subopt overlap of 1-mut structures (neutrality)
-                             subopt-robustness-summary)])
-                      instos))
-            data (if (fs/exists? ofile) (doall (concat (read-clj ofile) cur)) cur)]
-        (io/with-out-writer ofile
-          (println ";;;generated using main-subopt-robustness. Estimate of the significance of the wild-type sto compared to the inverse folded version.")
-          (prn data))))
-    ))
+  [& args]
+  (let [[opts _ usage] (apply cli args banner)
+        ofile (opts :file) ;storage location
+        fdir (str homedir "/bin/gaisr/trainset2/pos/")]
+    (cond
+     (opts :help) (print usage)
+     (nil? args) (print usage)
+     (not (fs/exists? ofile)) (println "requires outfile") 
+     :else
+     (doseq [instos (->> (remaining-files #(not (re-find #"\.7\.sto" %)) (fs/listdir fdir) (opts :ignore))
+                         (partition-all 2 ) ;group into manageable chuncks
+                         )]
+       (let [cur (doall
+                  (map (fn [insto]
+                         [(keyword insto)
+                          (-> (subopt-robustness (str fdir insto) (opts :nseqs)) ;list-of-lists average subopt overlap of 1-mut structures (neutrality)
+                              subopt-robustness-summary)])
+                       instos))
+             data (if (fs/exists? ofile) (doall (concat (read-clj ofile) cur)) cur)]
+         (io/with-out-writer ofile
+           (println ";;;generated using main-subopt-robustness. Estimate of the significance of the wild-type sto compared to the inverse folded version.")
+           (prn data))))
+     )))
 
 (defn main-subopt-significance
   "Estimates the significance of the suboptimal overlaps seen when
@@ -412,28 +450,30 @@
    analyze using: (reduce #(assoc %1 (first %2) (avg-overlap (second
    %2))) {} (read-string (slurp ofile)))"
 
-  [outfile & {:keys [ncores nsamples]
-              :or {ncores 1 nsamples 1}}]
-  (let [ofile outfile ;storage location
+  [& args]
+  (let [[opts _ usage] (apply cli args banner)
+        ofile (opts :file) ;storage location
         fdir (str homedir "/bin/gaisr/trainset2/pos/")
-        done-files (when (fs/exists? ofile) (->> (read-clj ofile) ;read existing data
-                                                 (into {})
-                                                 ))]
-    (doseq [instos (->> (filter #(and (re-find #"\.3\.sto" %) ;subset of data
-                                      (not (contains? done-files %))) ;remove done files
-                                (fs/listdir fdir))
+        ]
+    (cond
+     (opts :help) (print usage)
+     (nil? args) (print usage)
+     (not (fs/exists? ofile)) (println "requires outfile") 
+     :else
+     (doseq [instos (->> (remaining-files #(not (re-find #"\.3\.sto" %)) (fs/listdir fdir) (opts :ignore))
                         (partition-all 2 ) ;group into manageable chuncks
-                        #_(take 1))]
-      (let [cur (map (fn [insto]
+                        )]
+      (let [cur (doall
+                 (map (fn [insto]
                        [insto
                         ;;compare wild type sto against nsample shuffled versions
-                        (avg-overlap (subopt-significance (str fdir insto) :ncores ncores :nsamples nsamples))])
-                     instos)
+                        (avg-overlap (subopt-significance (str fdir insto) (opts :ncores) (opts :nseqs)))])
+                     instos))
             data (if (fs/exists? ofile) (concat (read-clj ofile) cur) cur)] ;add new data to existing
         (io/with-out-writer ofile
           (println ";;;generated using main-subopt-significance. Estimate of the significance of the wild-type sto compared to the dinucloetide shuffled version.")
           (prn data)) ;write to file
-        ))))
+        )))))
 ;;;----------------------------------------------------
 
 
@@ -477,9 +517,9 @@
                       (for [s l]
                         (pmap (fn [i]
                                 (let [tx (transpose (x s (str fdir "pos/" sto) i))]
-                                  [(pearsonsCC (first tx) (second tx))
-                                   (pearsonsCC (first tx) (third tx))
-                                   (pearsonsCC (second tx) (third tx))]))
+                                  [(pearson-correlation (first tx) (second tx))
+                                   (pearson-correlation (first tx) (third tx))
+                                   (pearson-correlation (second tx) (third tx))]))
                               (range 1 11)))
                       ))
                   fsto ffasta)))))
