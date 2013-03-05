@@ -130,12 +130,15 @@
         [opts _ usage] (cli args
                             ["-t" "--todo" "files todo" :parse-fn parse :default todo-files]
                             ["-d" "--done" "files done" :parse-fn parse :default done-files]
-                            ["-n" "--nseqs" "number of inverse seqs to create" :default 100]
+                            ["-n" "--nseqs" "number of inverse seqs to create"
+                             :parse-fn #(Integer/parseInt %) :default 100]
+                            ["-nc" "--ncpu" "number of cpus to use"
+                             :parse-fn :parse-fn #(Integer/parseInt %) :default 10]
                             ["-to" "--timeout" "timeout in hours" :default 10]
                             ["-h" "--help" "usage" :default nil :flag true])
         {todo :todo done :done nseqs :nseqs} opts]
     (if (or args
             (opts :help))
-      (doall (driver-create-inv todo done nseqs (opts :timeout) :units :hr :ncore 5))
+      (doall (driver-create-inv todo done nseqs (opts :timeout) :units :hr :ncore (/ (opts :ncpu) 2)))
       (print usage))))
 

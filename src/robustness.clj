@@ -400,7 +400,7 @@
      ["-i" "--ignore" "file(s) to ignore" :parse-fn parse :default nil]
      ["-o" "--outfile" "REQUIRED. file to write to" :default nil]
      ["-n" "--nseqs" "number of inverse seqs to create" :default 100]
-     ["-nc" "--ncores" "number of cores to use" :default 2]
+     ["-nc" "--ncore" "number of cores to use" :default 2]
      ["-h" "--help" "usage" :default nil :flag true]]))
   
 (defn main-subopt-robustness
@@ -427,7 +427,7 @@
        (let [cur (doall
                   (map (fn [insto]
                          [(keyword insto)
-                          (-> (subopt-robustness (str fdir insto) (opts :nseqs)) ;list-of-lists average subopt overlap of 1-mut structures (neutrality)
+                          (-> (subopt-robustness (str fdir insto) (opts :nseqs) :ncore (opts :ncore)) ;list-of-lists average subopt overlap of 1-mut structures (neutrality)
                               subopt-robustness-summary)])
                        instos))
              data (if (fs/exists? ofile) (doall (concat (read-clj ofile) cur)) cur)]
@@ -467,7 +467,9 @@
                  (map (fn [insto]
                        [insto
                         ;;compare wild type sto against nsample shuffled versions
-                        (avg-overlap (subopt-significance (str fdir insto) (opts :ncores) (opts :nseqs)))])
+                        (avg-overlap
+                         (subopt-significance (str fdir insto) (opts :ncores)
+                                              (opts :nseqs) :ncores (opts :ncore)))])
                      instos))
             data (if (fs/exists? ofile) (concat (read-clj ofile) cur) cur)] ;add new data to existing
         (io/with-out-writer ofile
