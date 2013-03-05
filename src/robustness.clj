@@ -373,8 +373,10 @@
                             ["-f" "--file" "file(s) to check neutrality for"
                              :parse-fn #(str/split #" " %) ;create list of files
                              :default nil]
+                            ["-o" "--outfile" "file to write to" :default nil]
                             ["-p" "--pos" "check only positive training files" :default nil :flag true]
                             ["-n" "--neg" "check only negative training files" :default nil :flag true]
+                            ["-nc" "--ncore" "number cores to use" :parse-fn #(Integer/parseInt %) :default 6]
                             ["-d" "--debug" "debug using (take 3 (filter #(re-seq #\"RF00555-seed\" %) fsto))"
                              :default nil :flag true]
                             ["-h" "--help" "usage" :default nil :flag true])
@@ -386,11 +388,16 @@
                  (filter #(re-find #"\.sto" %) (fs/listdir fdir)))
         stos (if (opts :debug)
                (take 3 (filter #(re-seq #"RF00555-seed" %) fsto))
-               fsto)]
-    (doall
-     ;;go over each sto in the dir provided
-     (for [sto stos]
-       (subopt-overlap-sto sto)))))
+               fsto)
+        neutrality (doall
+                    ;;go over each sto in the dir provided
+                    (for [sto stos]
+                      (subopt-overlap-sto sto :ncore (opts :ncore))))]
+    (cond
+     (or (nil? args) (opts :help)) (print usage) ;usage help
+     (not (nil? (opts :outfile))) (prn (vec neutrality)) ;data to file
+     :else
+     neutrality)))
 
 (def ^{:private true} banner
   (let [parse (fn [s] (-> (str/split #" " s) vec))]
@@ -414,12 +421,12 @@
   
   [& args]
   (let [[opts _ usage] (apply cli args banner)
-        ofile (opts :file) ;storage location
+        ofile (opts :outfile) ;storage location
         fdir (str homedir "/bin/gaisr/trainset2/pos/")]
     (cond
      (opts :help) (print usage)
      (nil? args) (print usage)
-     (not (fs/exists? ofile)) (println "requires outfile") 
+     (nil? ofile) (println "requires outfile") 
      :else
      (doseq [instos (->> (remaining-files #(not (re-find #"\.7\.sto" %)) (fs/listdir fdir) (opts :ignore))
                          (partition-all 2 ) ;group into manageable chuncks
