@@ -142,7 +142,10 @@
            ;;finds 1000 suboptimal structures and
            ;;finds the percent overlap of
            ;;suboptimal structures to the cons struct
-           (doall (subopt-overlap-neighbors s cons-keys :nsubopt nsubopt))))
+           (doall (subopt-overlap-neighbors s cons-keys
+                                            :nsubopt nsubopt
+                                            :ncore (quot ncore
+                                                         (count l))))))
        ncore
        l))] ;l=list of seqs in the sto
     ))
@@ -394,7 +397,8 @@
                      (subopt-overlap-sto (str fdir sto) :ncore (opts :ncore)))]
     (cond
      (or (nil? args) (opts :help)) (print usage) ;usage help
-     (not (nil? (opts :outfile))) (prn (vec neutrality)) ;data to file
+     (not (nil? (opts :outfile))) (io/with-out-writer (opts :outfile)
+                                    (prn (vec neutrality))) ;data to file
      :else
      (doall neutrality))))
 
