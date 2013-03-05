@@ -132,7 +132,10 @@
   [sto & {:keys [ncore nsubopt altname]
           :or {ncore 6 nsubopt 1000 altname sto}}]
   (let [{l :seqs cons :cons} (read-sto sto :with-names true)
-        cons (change-parens (first cons))]
+        cons (change-parens (first cons))
+        cores (quot ncore
+                    (count l))
+        cores (if (< cores 1) 1 cores)]
     [altname ;return [filename data]
      (doall
       ;;go over each seq in the alignment
@@ -144,8 +147,7 @@
            ;;suboptimal structures to the cons struct
            (doall (subopt-overlap-neighbors s cons-keys
                                             :nsubopt nsubopt
-                                            :ncore (quot ncore
-                                                         (count l))))))
+                                            :ncore cores))))
        ncore
        l))] ;l=list of seqs in the sto
     ))
