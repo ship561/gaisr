@@ -383,21 +383,20 @@
         fdir (str homedir "/bin/gaisr/trainset2/"
                   (cond
                    (opts :pos) "pos/"
-                   (opts :neg) "neg/"))
+                   (opts :neg) "neg/"
+                   :else "pos/"))
         fsto (or (opts :file)
                  (filter #(re-find #"\.sto" %) (fs/listdir fdir)))
         stos (if (opts :debug)
                (take 3 (filter #(re-seq #"RF00555-seed" %) fsto))
                fsto)
-        neutrality (doall
-                    ;;go over each sto in the dir provided
-                    (for [sto stos]
-                      (subopt-overlap-sto sto :ncore (opts :ncore))))]
+        neutrality (for [sto stos] ;loop over stos
+                     (subopt-overlap-sto (str fdir sto) :ncore (opts :ncore)))]
     (cond
      (or (nil? args) (opts :help)) (print usage) ;usage help
      (not (nil? (opts :outfile))) (prn (vec neutrality)) ;data to file
      :else
-     neutrality)))
+     (doall neutrality))))
 
 (def ^{:private true} banner
   (let [parse (fn [s] (-> (str/split #" " s) vec))]
