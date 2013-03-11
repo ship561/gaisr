@@ -134,7 +134,8 @@
                              :parse-fn #(Integer/parseInt %) :default 100]
                             ["-nc" "--ncpu" "number of cpus to use"
                              :parse-fn :parse-fn #(Integer/parseInt %) :default 10]
-                            ["-to" "--timeout" "timeout in hours" :default 10]
+                            ["-to" "--timeout" "timeout in hours"
+                             :parse-fn #(Integer/parseInt %) :default 10]
                             ["-h" "--help" "usage" :default nil :flag true])
         {todo :todo done :done nseqs :nseqs} opts]
     (if (or args
