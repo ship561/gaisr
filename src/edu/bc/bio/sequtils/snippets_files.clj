@@ -3,35 +3,98 @@
             [clojure.contrib.string :as str]
             [clojure.java.shell :as shell]
             [edu.bc.fs :as fs])
-  (:use edu.bc.bio.sequtils.files
+  (:use [clojure.contrib.pprint :only (cl-format)]
+        edu.bc.utils.fold-ops
+        edu.bc.bio.sequtils.files
         [edu.bc.utils.probs-stats :only (probs)]
-        [clojure.contrib.pprint :only (cl-format)]))
+        [refold :only (remove-gaps)]))
+
+(defn change-parens
+  "Change the stucture line to use (, ), and  isntead of <,>,-,and :"
+  
+  [struct]
+  (->> struct
+       (str/replace-re #"\<" "(") ;open
+       (str/replace-re #"\>" ")" ) ;close
+       (str/replace-re #"\:|\-" "." ))) ;replace gaps
+
+(defn read-sto
+  "read stockholm file creates a map where the key=name val=sequence"
+  
+  [f & {:keys [with-names only-names] 
+        :or {with-names false
+             only-names false}}]
+  (let [[gc-lines seq-lines cons-lines] (join-sto-fasta-lines f "")
+        cov (first (map #(last (str/split #"\s+" %))
+                (filter #(.startsWith % "#=GC cov_SS_cons") gc-lines)))
+        cl (map #(last (second %))
+                (filter #(.startsWith (first %) "#=GC SS_cons") cons-lines))
+        sl (reduce (fn [v [nm [_ sq]]]
+                     (let [sq (str/replace-re #"T" "U" (.toUpperCase sq))]
+                       (cond
+                        with-names (conj v [nm sq])
+                        only-names (conj v nm)
+                        :else
+                        (conj v sq))))
+                [] seq-lines)]
+    (assoc {} :seqs sl :cons cl :file f :cov cov)))
+
+(defn valid-seq-struct
+  "Checks the sqs (list of sequences) to make sure that all sequences
+   can form part of the consensus structure. This is useful when
+   ensuring that the shuffled stos will form valid
+   structures. Occassionally, sequences will not fold leaving an empty
+   structure and causing other functions to fail. Returns true if all
+   sequences can fold into part of the cons structure."
+  
+  [sqs cons]
+  (let [valid? (fn [st] (pos? (count (struct->matrix st))))]
+    (every? true? (map (fn [[_ s]]
+                         (let [[_ st] (remove-gaps s cons)]
+                           (valid? st)))
+                       sqs))))
+
+(defn valid-seq-sto
+  "Checks the sto to make sure that all sequences in the file can form
+   part of the consensus structure. This is useful when ensuring that
+   the shuffled stos will form valid structures. Occassionally,
+   sequences in the sto will not fold into the consensus structure and
+   cause other functions to fail. Returns true if all sequences can
+   fold into part of the cons structure."
+  
+  [sto]
+  (let [{sqs :seqs cons :cons} (read-sto sto :with-names true)
+        cons (change-parens (first cons))]
+    (valid-seq-struct sqs cons)))
+
+(defn toaln
+  "prints out the seq-lines in clustalW format"
+  
+  [seq-lines]
+  (println "CLUSTAL W (1.83) multiple sequence alignment\n")
+  (doseq [[nm sq] seq-lines]
+    (cl-format true "~A~40T~A~%" nm sq)))
 
 (defn aln->sto
-  "takes an alignment in Clustal W format and produces a sto file by using RNAalifold to determine
-   the structure and then making it into a sto file adding header and a consensus line"
+  "takes an alignment in Clustal W format and produces a sto file by
+   using RNAalifold to determine the structure and then making it into
+   a sto file adding header and a consensus line"
 
-  [in-aln out-sto & {fold_alg :fold_alg :or {fold_alg "RNAalifold" }}]
+  [in-aln out-sto & {:keys [fold_alg]
+                     :or {fold_alg "RNAalifold"}}]
   (if (= fold_alg "RNAalifold")
-    (let [st (->> ((shell/sh "RNAalifold"
-                             "-P" "/home/kitia/Desktop/ViennaRNA-2.0.0/rna_andronescu2007.par"
-                             "-r" "--noPS" in-aln) :out)
-                  (str/split-lines)
-                  second
-                  (str/split #" ")
-                  first)
-          sq (rest (second (join-sto-fasta-lines in-aln "")))]
+    (let [st (fold-aln in-aln)
+          sq (read-seqs in-aln :type "aln")]
       (io/with-out-writer out-sto
         (println "# STOCKHOLM 1.0\n")
-        (doseq [[n [_ s]] sq]
-          (cl-format true "~A~40T~A~%" n (str/replace-re #"\-" "." s)))
+        (doseq [s sq]
+          (let [[nm s] (str/split #"\s+" s)]
+            (cl-format true "~A~40T~A~%" nm (str/replace-re #"\-" "." s))))
         (cl-format true "~A~40T~A~%" "#=GC SS_cons" st)
         (println "//"))
       out-sto) ;return out sto filename
     ;;else use cmfinder
     #_(shell/sh "perl" "/home/kitia/bin/gaisr/src/mod_cmfinder.pl" in-aln out-sto)))
-
-
 
 (defn sto->randsto
   "takes a sto input file and generates a random sto to specified
@@ -65,32 +128,7 @@
      (io/with-out-writer outfasta
       (sto->fasta sto))))
 
-(defn read-sto
-  "read stockholm file creates a map where the key=name val=sequence"
-  
-  [f & {with-names :with-names
-                     :or {with-names false}}]
-  (let [[gc-lines seq-lines cons-lines] (join-sto-fasta-lines f "")
-        cov (first (map #(last (str/split #"\s+" %))
-                (filter #(.startsWith % "#=GC cov_SS_cons") gc-lines)))
-        cl (map #(last (second %))
-                (filter #(.startsWith (first %) "#=GC SS_cons") cons-lines))
-        sl (reduce (fn [v [nm [_ sq]]]
-                     (let [sq (str/replace-re #"T" "U" (.toUpperCase sq))]
-                       (if-not with-names
-                         (conj v sq)
-                         (conj v [nm sq]))))
-                [] seq-lines)]
-    (assoc {} :seqs sl :cons cl :file f :cov cov)))
 
-(defn change-parens
-  "Change the stucture line to use (, ), and  isntead of <,>,-,and :"
-  
-  [struct]
-  (->> struct
-       (str/replace-re #"\<" "(") ;open
-       (str/replace-re #"\>" ")" ) ;close
-       (str/replace-re #"\:|\-" "." ))) ;replace gaps
 
 (defn profile
   "Creates a profile object of the sto which is read in. The keys

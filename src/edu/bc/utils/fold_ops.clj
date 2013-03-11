@@ -141,6 +141,16 @@
          (remove #(re-find #"[^\(\)\.]" %)))
     ))
 
+(defn fold-aln [aln]
+  (-> ((shell/sh "RNAalifold"
+                  "-P" param-file
+                  "-r" "--noPS" aln)
+        :out)
+       (str/split-lines)
+       second
+       (str/split #"\s")
+       first))
+
 (defn bpdist
   "finds the base-pair distance between 2 structures"
 

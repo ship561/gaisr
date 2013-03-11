@@ -139,16 +139,17 @@
     [altname ;return [filename data]
      (doall
       ;;go over each seq in the alignment
-      (pxmap
+      (map
        (fn [[nm s]] 
          (let [[s st cons-keys] (degap-conskeys s cons)]
+           (prn :sto sto :cons-keys cons-keys :s s :st st)
            ;;finds 1000 suboptimal structures and
            ;;finds the percent overlap of
            ;;suboptimal structures to the cons struct
            (doall (subopt-overlap-neighbors s cons-keys
                                             :nsubopt nsubopt
-                                            :ncore cores))))
-       ncore
+                                            :ncore (inc ncore)))))
+       ;ncore
        l))] ;l=list of seqs in the sto
     ))
 
@@ -379,17 +380,18 @@
                              :parse-fn #(str/split #" " %) ;create list of files
                              :default nil]
                             ["-o" "--outfile" "file to write to" :default nil]
+                            ["-di" "--dir" "dir in which files are located" :default (str homedir "/bin/gaisr/trainset2/")]
                             ["-p" "--pos" "check only positive training files" :default nil :flag true]
                             ["-n" "--neg" "check only negative training files" :default nil :flag true]
                             ["-nc" "--ncore" "number cores to use" :parse-fn #(Integer/parseInt %) :default 6]
                             ["-d" "--debug" "debug using (take 3 (filter #(re-seq #\"RF00555-seed\" %) fsto))"
                              :default nil :flag true]
                             ["-h" "--help" "usage" :default nil :flag true])
-        fdir (str homedir "/bin/gaisr/trainset2/"
+        fdir (str (opts :dir) 
                   (cond
                    (opts :pos) "pos/"
                    (opts :neg) "neg/"
-                   :else "pos/"))
+                   ))
         fsto (or (opts :file)
                  (filter #(re-find #"\.sto" %) (fs/listdir fdir)))
         stos (if (opts :debug)

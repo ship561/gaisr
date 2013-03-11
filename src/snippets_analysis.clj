@@ -4,7 +4,7 @@
             [clojure.set :as sets]
             [edu.bc.fs :as fs]
             [clojure.core.reducers :as r]
-           )
+            [clojure.pprint :as pp])
   (:use robustness
         refold
         edu.bc.utils
@@ -235,3 +235,23 @@
                neighbors (into {} (mutant-neighbor wt :with-names true))]
            (info-content-wt-neighbor wt neighbors st cons-keys n))))))
   )
+
+
+(defn avg-neutrality
+  "takes output from main-subopt-overlap"
+
+  [x]
+  (let [mean-subopt-overlap (fn [overlaps-perseq]
+                              (map #(mean %) overlaps-perseq))
+        seq-neutrality (fn [seqk]
+                         (map (fn [subopt-overlaps] 
+                                (-> (mean-subopt-overlap subopt-overlaps)
+                                    mean)) ;neutrality for each seq
+                              seqk))
+        ]
+    (reduce (fn [m [nm vals]]
+              (let [neut (seq-neutrality vals)]
+                (assoc m nm {:median (median neut)
+                             :mean (mean neut)
+                             :sd (sd neut)})))
+            {} x)))

@@ -601,9 +601,10 @@
    seq.  Filespec can denote either a fna, fa, hitfna, aln, sto, or
    gma file format file.
   "
-  [filespec & {info :info :or {info :data}}]
-  (let [type (fs/ftype filespec)
-        f   (seqline-info-mapper type info)
+  [filespec & {:keys [info type]
+               :or {info :data
+                    type (fs/ftype filespec)}}]
+  (let [f   (seqline-info-mapper type info)
         ;;sqs (str/split-lines (slurp filespec)) ; <-- NOT LAZY!!
         sqs (filter #(let [l (str/replace-re #"^\s+" "" %)]
                        (and (not= l "") (not (.startsWith l "#"))))
