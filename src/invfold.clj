@@ -133,7 +133,7 @@
                             ["-n" "--nseqs" "number of inverse seqs to create"
                              :parse-fn #(Integer/parseInt %) :default 100]
                             ["-nc" "--ncpu" "number of cpus to use"
-                             :parse-fn :parse-fn #(Integer/parseInt %) :default 10]
+                             :parse-fn #(Integer/parseInt %) :default 10]
                             ["-to" "--timeout" "timeout in hours"
                              :parse-fn #(Integer/parseInt %) :default 10]
                             ["-h" "--help" "usage" :default nil :flag true])
