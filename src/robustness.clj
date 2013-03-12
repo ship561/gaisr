@@ -236,8 +236,8 @@
    of the sequence. Takes a sequence and the consensus structure and
    generates n sequences with similar structure. Then finds the
    neutrality of each inverse-folded sequence. Returns the average
-   %overlap-between-cons-and-suboptimal-structure for each sequence (cons wt
-   muts)"
+   %overlap-between-cons-and-suboptimal-structure for each
+   sequence (cons wt muts)"
 
   [sto n & {:keys [ncore nsubopt]
             :or {ncore 5
@@ -415,8 +415,10 @@
      ["-di" "--dir" "dir in which files are located"
       :default (str homedir "/bin/gaisr/trainset2/pos/")]
      ["-d" "--debug" :default nil :flag true]
-     ["-n" "--nseqs" "number of inverse seqs to create" :default 100]
-     ["-nc" "--ncore" "number of cores to use" :default 2]
+     ["-n" "--nseqs" "number of inverse seqs to create"
+      :parse-fn #(Integer/parseInt %) :default 100]
+     ["-nc" "--ncore" "number of cores to use"
+      :parse-fn #(Integer/parseInt %) :default 2]
      ["-h" "--help" "usage" :default nil :flag true]]))
   
 (defn main-subopt-robustness
@@ -439,13 +441,13 @@
      (nil? (opts :file)) (println "requires in files")
      :else
      (doseq [instos (->> (remaining-files #(not (identity %))
-                                          (fs/listdir fdir)
+                                          (opts :file)
                                           (opts :ignore))
                          (partition-all 2 ) ;group into manageable
                                         ;chuncks to write small
                                         ;sections at a time
-                         )]
-       (let [cur (doall
+                         )] 
+       (let [_ (println instos) cur (doall
                   (map (fn [insto]
                          [(keyword insto)
                           ;;list-of-lists average subopt overlap of 1-mut structures (neutrality)
