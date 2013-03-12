@@ -24,47 +24,13 @@
                               (remove #(empty? (str/replace-re #"\.|\-" "" %)))
                               transpose))]
     (->> (map (fn [[nm [uid sq]] ungap-sq]
-                         [nm [uid ungap-sq]])
-                       rand-sqs
-                       (remove-gap-col rand-sqs))
-         (sort-by #(-> % second first) )
-         (map (fn [[nm [_ sq]]] [nm sq]) )
+                [nm [uid ungap-sq]]) ;recombine degapped seqs
+                                        ;with the proper names
+              rand-sqs
+              (remove-gap-col rand-sqs))
+         (sort-by #(-> % second first) ) ;preserve order of seqs from original
+         (map (fn [[nm [_ sq]]] [nm sq]) );only return name and seq
          )))
-
-(defn make-training-set []
- ;;code looks through list of stos and picks random sequences out of
- ;;the sto
-  (doseq [f (->> (str (fs/homedir) "/bin/gaisr/trainset/neg")
-                 (fs/listdir )
-                 (filter #(re-find #".sto$" %) )) ;;use trainset/list2 or trainset/neg/list-sto-only
-          ]
-    (let [c (atom 0)
-          fdir "/home/kitia/bin/gaisr/trainset/neg/" ;;use either trainset/ or trainset/neg
-          odir "/home/kitia/bin/gaisr/trainset2/neg/" ;;use either trainset2/pos or trainset2/neg
-          seq-lines (read-seqs (str fdir f))
-          ;;f "RF01693-seed.sto"
-          ]
-      (if (>= (nCk (count seq-lines) 3) 10)
-        (doseq [subset (sto->subset-sto (str fdir f) 10)]
-          (prn c f)
-          (fs/copy subset (str odir (subs f 0 (- (count f) 3)) @c ".sto"))
-          (swap! c inc)
-          (fs/rm subset))
-        (println f "did not work. too few sequences")
-        ))))
-
-(defn foo
-  "don't remember what this does yet."
-  
-  []
-  (let [d "/home/kitia/bin/gaisr/trainset2/"
-        ]
-    (doseq [stos (fs/listdir d)
-            s stos]
-      (let [fasta (str (subs s 0 (- (count s) 3)) "fasta")]
-        (sto->fasta (str d s) (str d fasta))))))
-
-
 
 (defn sto->subset-sto
   "takes a sto input file and generates a random sto that contains a
@@ -92,3 +58,47 @@
          (remove #(= :remove %) ) 
          (take n)) ;take first n valid stos
     ))
+
+(defn make-training-set
+  "make the training set from existing stos. The training set is
+  composed of stos which are a subset of the positive or negative
+  stos. The positive stos are from Rfam and the negative stos are
+  generated using SISSIz to preserve mono/dinucleotide composition as
+  well as column base conservation and gap conservation. The indir is
+  the directory of stos and the outdir is where the training stos are
+  put.
+
+  Usually use trainset/neg or trainset/ (for pos)."
+
+  [indir outdir]
+  (doseq [f (->> indir
+                 (fs/listdir )
+                 (filter #(re-find #".sto$" %) )) ;;use trainset/list2 or trainset/neg/list-sto-only
+          ]
+    (let [c (atom 0)
+          seq-lines (read-seqs (str indir f))
+          ;;f "RF01693-seed.sto"
+          ]
+      (if (>= (nCk (count seq-lines) 3) 10)
+        (doseq [subset (sto->subset-sto (str indir f) 10)]
+          (prn c f)
+          (fs/copy subset (str outdir (subs f 0 (- (count f) 3)) @c ".sto"))
+          (swap! c inc)
+          (fs/rm subset))
+        (println f "did not work. too few sequences")
+        ))))
+
+(defn foo
+  "don't remember what this does yet."
+  
+  []
+  (let [d "/home/kitia/bin/gaisr/trainset2/"
+        ]
+    (doseq [stos (fs/listdir d)
+            s stos]
+      (let [fasta (str (subs s 0 (- (count s) 3)) "fasta")]
+        (sto->fasta (str d s) (str d fasta))))))
+
+
+
+

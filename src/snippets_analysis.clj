@@ -238,20 +238,28 @@
 
 
 (defn avg-neutrality
-  "takes output from main-subopt-overlap"
+  "takes output from main-subopt-overlap. Finds the neutrality for
+  each seq. The neutrality is defined as the mean of the
+  mean-suboptimal-structure-overlap over all 1-mutant neighbors. The
+  suboptimal-structure-overlap for a given sequence and structure uses
+  1000 suboptimal structures; for each subopt structure the percent of
+  base pairs in the suboptimal structure retained from the given
+  structure is found. The mean of the %retention of 1000 suboptimal
+  structures"
 
   [x]
-  (let [mean-subopt-overlap (fn [overlaps-perseq]
-                              (map #(mean %) overlaps-perseq))
-        seq-neutrality (fn [seqk]
-                         (map (fn [subopt-overlaps] 
-                                (-> (mean-subopt-overlap subopt-overlaps)
-                                    mean)) ;neutrality for each seq
-                              seqk))
+  (let [mean-dist (fn [dists-perseq]
+                    (mean dists-perseq))
+        seq-neutrality (fn [seqk] 
+                         (-> (map mean-dist seqk) ;subopt overlap for
+                                        ;each 1-mut neighbor
+                             mean)) ;neutrality
         ]
     (reduce (fn [m [nm vals]]
-              (let [neut (seq-neutrality vals)]
+              (let [neut (map seq-neutrality vals)] ;neutrality of
+                                        ;each seq
+                ;;summary stats of neutrality for sto
                 (assoc m nm {:median (median neut)
-                             :mean (mean neut)
+                             :mean (mean neut) ;sto mean neutrality
                              :sd (sd neut)})))
             {} x)))

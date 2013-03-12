@@ -142,7 +142,6 @@
       (map
        (fn [[nm s]] 
          (let [[s st cons-keys] (degap-conskeys s cons)]
-           (prn :sto sto :cons-keys cons-keys :s s :st st)
            ;;finds 1000 suboptimal structures and
            ;;finds the percent overlap of
            ;;suboptimal structures to the cons struct
@@ -413,6 +412,9 @@
       :default nil]
      ["-i" "--ignore" "file(s) to ignore" :parse-fn parse :default nil]
      ["-o" "--outfile" "REQUIRED. file to write to" :default nil]
+     ["-di" "--dir" "dir in which files are located"
+      :default (str homedir "/bin/gaisr/trainset2/pos/")]
+     ["-d" "--debug" :default nil :flag true]
      ["-n" "--nseqs" "number of inverse seqs to create" :default 100]
      ["-nc" "--ncore" "number of cores to use" :default 2]
      ["-h" "--help" "usage" :default nil :flag true]]))
@@ -429,22 +431,32 @@
   [& args]
   (let [[opts _ usage] (apply cli args banner)
         ofile (opts :outfile) ;storage location
-        fdir (str homedir "/bin/gaisr/trainset2/pos/")]
+        fdir (opts :dir)]
     (cond
      (opts :help) (print usage)
      (nil? args) (print usage)
-     (nil? ofile) (println "requires outfile") 
+     (nil? ofile) (println "requires outfile")
+     (nil? (opts :file)) (println "requires in files")
      :else
-     (doseq [instos (->> (remaining-files #(not (re-find #"\.7\.sto" %)) (fs/listdir fdir) (opts :ignore))
-                         (partition-all 2 ) ;group into manageable chuncks
+     (doseq [instos (->> (remaining-files #(not (identity %))
+                                          (fs/listdir fdir)
+                                          (opts :ignore))
+                         (partition-all 2 ) ;group into manageable
+                                        ;chuncks to write small
+                                        ;sections at a time
                          )]
        (let [cur (doall
                   (map (fn [insto]
                          [(keyword insto)
-                          (-> (subopt-robustness (str fdir insto) (opts :nseqs) :ncore (opts :ncore)) ;list-of-lists average subopt overlap of 1-mut structures (neutrality)
+                          ;;list-of-lists average subopt overlap of 1-mut structures (neutrality)
+                          (-> (subopt-robustness (str fdir insto)
+                                                 (opts :nseqs)
+                                                 :ncore (opts :ncore)) 
                               subopt-robustness-summary)])
                        instos))
-             data (if (fs/exists? ofile) (doall (concat (read-clj ofile) cur)) cur)]
+             data (if (fs/exists? ofile)
+                    (doall (concat (read-clj ofile) cur))
+                    cur)]
          (io/with-out-writer ofile
            (println ";;;generated using main-subopt-robustness. Estimate of the significance of the wild-type sto compared to the inverse folded version.")
            (prn data))))

@@ -135,11 +135,13 @@
                             ["-nc" "--ncpu" "number of cpus to use"
                              :parse-fn #(Integer/parseInt %) :default 10]
                             ["-to" "--timeout" "timeout in hours"
-                             :parse-fn #(Integer/parseInt %) :default 10]
+                             :parse-fn #(Double/parseDouble %) :default 10]
                             ["-h" "--help" "usage" :default nil :flag true])
         {todo :todo done :done nseqs :nseqs} opts]
     (if (or args
             (opts :help))
-      (doall (driver-create-inv todo done nseqs (opts :timeout) :units :hr :ncore (/ (opts :ncpu) 2)))
+      (doall (driver-create-inv todo done nseqs (opts :timeout)
+                                :units :hr
+                                :ncore (/ (opts :ncpu) 2)))
       (print usage))))
 
