@@ -447,7 +447,7 @@
                                         ;chuncks to write small
                                         ;sections at a time
                          )] 
-       (let [_ (println instos) cur (doall
+       (let [_ (println instos (opts :nseqs)) cur (doall
                   (map (fn [insto]
                          [(keyword insto)
                           ;;list-of-lists average subopt overlap of 1-mut structures (neutrality)
@@ -456,7 +456,8 @@
                                                  :ncore (opts :ncore)) 
                               subopt-robustness-summary)])
                        instos))
-             data (if (fs/exists? ofile)
+             data (if (and (fs/exists? ofile)
+                           (not (fs/empty? ofile)))
                     (doall (concat (read-clj ofile) cur))
                     cur)]
          (io/with-out-writer ofile
