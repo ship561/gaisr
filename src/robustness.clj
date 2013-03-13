@@ -212,10 +212,12 @@
                         inc))
                   (second avg-subopt))
         [wt & muts]  (-> avg-subopt second transpose)
-        robustness (every? (fn [[wt & muts]] (> wt (mean muts))) (second avg-subopt))
+        robustness (map (fn [[wt & muts]]
+                          {:wt wt :mut (mean muts)})
+                        (second avg-subopt))
         neutrality (map (fn [[wt & muts]] (> wt (mean muts))) (second avg-subopt))]
-    {:wt {:mean (-> wt frequencies mean) :sd (sd wt)}
-     :muts {:mean (-> muts flatten frequencies mean) :sd (-> (map variance muts) mean Math/sqrt)}
+    {:wt {:mean (-> wt mean) :sd (sd wt)}
+     :muts {:mean (-> muts flatten mean) :sd (-> (map variance muts) mean Math/sqrt)}
      :rank rank
      :neutrality neutrality
      :robust? robustness}))
