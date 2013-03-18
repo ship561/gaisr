@@ -212,10 +212,10 @@
                         inc))
                   (second avg-subopt))
         [wt & muts]  (-> avg-subopt second transpose)
-        robustness (map (fn [[wt & muts]]
+        neutrality (map (fn [[wt & muts]]
                           {:wt wt :mut (mean muts)})
                         (second avg-subopt))
-        neutrality (map (fn [[wt & muts]] (> wt (mean muts))) (second avg-subopt))]
+        robustness (map (fn [[wt & muts]] (> wt (mean muts))) (second avg-subopt))]
     {:wt {:mean (-> wt mean) :sd (sd wt)}
      :muts {:mean (-> muts flatten mean) :sd (-> (map variance muts) mean Math/sqrt)}
      :rank rank
@@ -230,7 +230,8 @@
   
   [s st n]
   (let [[s st cons-keys] (degap-conskeys s st)]
-    (-> (map mean (subopt-overlap-neighbors s cons-keys :nsubopt n))
+    (->> (subopt-overlap-neighbors s cons-keys :nsubopt n)
+        (map mean )
         mean)))
 
 (defn subopt-robustness
@@ -267,12 +268,44 @@
 
 ;;;-----------------------------------
 ;;;Section for visualizing data
+(defn seq-neutrality
+  "Takes a list of sets of dists. The dist is defined as the fraction
+  of base-pairs in the given structure retained in the structure of a
+  mutant neighbor of the given seq. The subopt overlap is (mean dist1
+  .. disti). Neutrality = (mean subopt-overlap1 .. subopt-overlap3n).
+  The neutrality indicates the ability of the sequence to maintain
+  structure despite mutations.
+
+  Robustness = neutrality(wt) > mean neutrality(1-muts) "
+
+  [list-dists]
+  (let [subopt-overlap (fn [dist]
+                         (mean dist))]
+    (-> (map subopt-overlap list-dists) ;calc subopt overlap of each 1-mut 
+        mean) ;neutrality
+    ))
+
+(defn sto-neutrality
+  "takes output from main-subopt-overlap. Finds the neutrality for
+  each seq in the sto. returns summary stats for a list of sto as a
+  whole."
+
+  [x]
+  (reduce (fn [m [nm vals]]
+            (let [neut (map seq-neutrality vals)] ;neutrality of
+                                        ;each seq in a sto
+              ;;summary stats of neutrality for sto
+              (assoc m nm {:median (median neut)
+                           :mean (mean neut) ;sto mean neutrality
+                           :sd (sd neut)})))
+          {} x))
 
 (defn avg-overlap
   "Takes a map of percent overlaps where it is organized in [k v]
    pairs. k=file name and v=list of lists of frequency maps of percent
    overlap of 1000 suboptimal structures for the WT and each of its
-   1-mutant neighbors. Returns a map of maps of the summary stats."
+   1-mutant neighbors. Returns a map of maps of the summary
+   stats. Equivalent of the weighted mean."
   
   [map-of-per-overlaps]
   (reduce (fn [m [k list-lists-maps]]
@@ -449,7 +482,7 @@
                                         ;chuncks to write small
                                         ;sections at a time
                          )] 
-       (let [_ (println instos (opts :nseqs)) cur (doall
+       (let [cur (doall
                   (map (fn [insto]
                          [(keyword insto)
                           ;;list-of-lists average subopt overlap of 1-mut structures (neutrality)
@@ -492,20 +525,20 @@
      (not (fs/exists? ofile)) (println "requires outfile") 
      :else
      (doseq [instos (->> (remaining-files #(not (re-find #"\.3\.sto" %)) (fs/listdir fdir) (opts :ignore))
-                        (partition-all 2 ) ;group into manageable chuncks
-                        )]
-      (let [cur (doall
-                 (map (fn [insto]
-                       [insto
+                         (partition-all 2 ) ;group into manageable chuncks
+                         )]
+       (let [cur (doall
+                  (map (fn [insto]
+                         [insto
                         ;;compare wild type sto against nsample shuffled versions
-                        (avg-overlap
-                         (subopt-significance (str fdir insto) (opts :ncores)
-                                              (opts :nseqs) :ncores (opts :ncore)))])
-                     instos))
-            data (if (fs/exists? ofile) (concat (read-clj ofile) cur) cur)] ;add new data to existing
-        (io/with-out-writer ofile
-          (println ";;;generated using main-subopt-significance. Estimate of the significance of the wild-type sto compared to the dinucloetide shuffled version.")
-          (prn data)) ;write to file
+                          (avg-overlap
+                           (subopt-significance (str fdir insto) (opts :ncores)
+                                                (opts :nseqs) :ncores (opts :ncore)))])
+                       instos))
+             data (if (fs/exists? ofile) (concat (read-clj ofile) cur) cur)] ;add new data to existing
+         (io/with-out-writer ofile
+           (println ";;;generated using main-subopt-significance. Estimate of the significance of the wild-type sto compared to the dinucloetide shuffled version.")
+           (prn data)) ;write to file
         )))))
 ;;;----------------------------------------------------
 

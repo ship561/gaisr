@@ -99,7 +99,8 @@
 (defn sto->randsto
   "takes a sto input file and generates a random sto to specified
   output. Program uses SISSIz to make the random aln. Then the aln is
-  converted to sto format. Returns the file name of the new sto"
+  converted to sto format by adding a structure line. Structure is
+  found by using RNAalifold. Returns the file name of the new sto"
 
   [insto outsto]
   (let [fname (str/take (- (count insto) 3) insto)

@@ -162,6 +162,56 @@
        (io/with-out-writer outfile
          (compare-col-jsd sto)))))
 
+(defn info-content [N probs]
+    (let [probs (merge {\( 0 \) 0 \. 0} probs)]
+      (- (log2 N) (entropy probs))))
+
+(defn info-content-wt-neighbor
+  "Compares the distribution of base-pairs and gap chars in each
+   column between the wt and 1-mutant neighbor. Takes a seq and
+   neighbors, consensus structure keys and
+   n=number_suboptimal_structures. Returns a list of vectors where
+   each vector is [mutant-name [ith-col jsd(wt,mut) %overlap]]."
+  
+  [sto-nm seq-nm wt neighbors cons cons-keys n & {:keys [ncore]
+                                                  :or {ncore 5}}]
+  (let [wt-probs (map #(probs 1 %) (transpose (fold wt :foldtype "RNAsubopt" :n n)))
+        fun (fn [c ic]
+              [(* (get c \( 0) ic)    ;open height
+               (* (get c \) 0) ic)    ;close height
+               (* (get c \. 0) ic)])  ;gap height
+        ]
+    (pxmap (fn [[neighbor-nm neighbor]]
+             (let [mut-probs (map #(probs 1 %) (transpose (fold neighbor :foldtype "RNAsubopt" :n n)))
+                   ]
+               ;;find the jsd between the wt col_i and mut col_i
+               (map (fn [pos c1 c2]
+                      (let [ic1 (info-content 3 c1)
+                            ic2 (info-content 3 c2)
+                            [openh1 closeh1 gaph1] (fun c1 ic1)
+                            [openh2 closeh2 gaph2] (fun c2 ic2)
+                            ]
+                        [sto-nm seq-nm neighbor-nm [pos ic1 openh1 closeh1 gaph1 ic2 openh2 closeh2 gaph2]]))
+                    (iterate inc 0) wt-probs mut-probs)))
+           ncore
+           neighbors)))
+
+(defn driver-info-content-vis
+    "takes a sto and produces the information content and heights for
+    each position for each 1-mutant neighbor in a sequence in a
+    sto. Produce a csv file."
+
+    [sto] 
+    (let [;;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
+          {sqs :seqs cons :cons} (read-sto sto :with-names true)
+          cons (change-parens (first cons))] 
+      (doall
+       (for [[seqnm s] sqs] 
+         (let [[wt st cons-keys] (degap-conskeys s cons)
+               n 1000
+               neighbors (into {} (mutant-neighbor wt :with-names true))]
+           (info-content-wt-neighbor (fs/basename sto) seqnm wt neighbors st cons-keys n)
+           )))))
 
 (comment
   
@@ -180,86 +230,53 @@
       (with-out-appender (str odir "temp3.txt")
         (outfn (combine-jsd)))))
 
-  (defn info-content [N probs]
-    (let [probs (merge {\( 0 \) 0 \. 0} probs)]
-      (- (log2 N) (entropy probs))))
-
-  (defn info-content-wt-neighbor
-  "Compares the distribution of base-pairs and gap chars in each
-   column between the wt and 1-mutant neighbor. Takes a seq and
-   neighbors, consensus structure keys and
-   n=number_suboptimal_structures. Returns a list of vectors where
-   each vector is [mutant-name [ith-col jsd(wt,mut) %overlap]]."
   
-  [wt neighbors cons cons-keys n]
-  (let [wt-probs (map #(probs 1 %) (transpose (fold wt :foldtype "RNAsubopt" :n n)))
-        fun (fn [c ic]
-              [(* (get c \( 0) ic)    ;open height
-               (* (get c \) 0) ic)    ;close height
-               (* (get c \. 0) ic)])  ;gap height
-        ]
-    (pxmap (fn [[nm neighbor]]
-             (let [mut-probs (map #(probs 1 %) (transpose (fold neighbor :foldtype "RNAsubopt" :n n)))
-                   ]
-               ;;find the jsd between the wt col_i and mut col_i
-               (map (fn [i c1 c2]
-                      (let [ic1 (info-content 3 c1)
-                            ic2 (info-content 3 c2)
-                            [openh1 closeh1 gaph1] (fun c1 ic1)
-                            [openh2 closeh2 gaph2] (fun c2 ic2)
-                            ]
-                        [nm [i ic1 openh1 closeh1 gaph1 ic2 openh2 closeh2 gaph2]]))
-                    (iterate inc 0) wt-probs mut-probs)))
-           5
-           neighbors)))
 
-  (io/with-out-writer "/home/kitia/bin/gaisr/robustness/temp.csv" 
-    (let [out foo]
-      (println "mut name,pos,wt info content,wt open height,wt close height,wt gap height,mut info content,mut open height,mut close height,mut gap height")
-                       (doseq [line out]
-                         (doseq [li line
-                                 l li]
-                           (println (str/join "," (flatten l))))
-                         (println ""))
-                         ))
+  
 
-  (def foo 
-    (let [sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
-          {sqs :seqs cons :cons} (read-sto sto :with-names true)
-          cons (change-parens (first cons))]
-      (doall
-       (for [[seqnm s] (take 1 sqs)]
-         (let [[wt st] (remove-gaps s cons)
-               cons-keys (set (keys (struct->matrix st)))
-               n 1000
-               neighbors (into {} (mutant-neighbor wt :with-names true))]
-           (info-content-wt-neighbor wt neighbors st cons-keys n))))))
+  (let [dir "/home/kitia/bin/gaisr/trainset2/pos/" 
+        ofile "/home/kitia/bin/gaisr/robustness/temp2.csv"]
+    ;;print out header for csv
+    (io/with-out-writer ofile
+      (println "sto name,seq name,mut name,pos,wt info content,wt open height,wt close height,wt gap height,mut info content,mut open height,mut close height,mut gap height"))
+    (doseq [insto (filter #(re-find #".7.sto" %) (fs/listdir dir))] ;stos
+      ;;information content calcs
+      (let [result (driver-info-content-vis (str dir insto))] 
+        (with-out-appender ofile
+          (doseq [line result]
+            (doseq [li line
+                    l li]
+              (println (str/join "," (flatten l)))) ;prints results
+            (println "")))))) ;end line properly
+
+  
+
+
+  ;;count the number of seqs which are robust and are not robust. the
+  ;;foo in this case is (read-clj "../robustness/subopt-robustness0.clj")
+  (->> (map (fn [[nm m]]
+          (let [robust? (m :neutrality)
+                ntrue (count (filter true? robust?))
+                nfalse (count (filter false? robust?))]
+            [ntrue nfalse]))
+            foo)
+       transpose
+       (map sum) )
+  
+  ;;creates list of ranks of the wt among its 1-mut neighbors. If rank
+  ;;<5 then the seq is considered significantly robust p < 0.05
+  (map (fn [[nm m]]
+         (let [rank (m :rank)] 
+           rank))
+       foo)
+  ;;create list of xs and ys to compare the wt neut to mut neut. In
+  ;;theory being above a diagonal means that  y>x ie (mut neut > wt neut).
+  (map flatten
+       (transpose
+        (map (fn [[nm m]]
+               (let [neut (m :robust?)
+                     wt (map #(% :wt) neut)
+                     mut (map #(% :mut) neut)] 
+                 [wt mut]))
+             foo)))
   )
-
-
-(defn avg-neutrality
-  "takes output from main-subopt-overlap. Finds the neutrality for
-  each seq. The neutrality is defined as the mean of the
-  mean-suboptimal-structure-overlap over all 1-mutant neighbors. The
-  suboptimal-structure-overlap for a given sequence and structure uses
-  1000 suboptimal structures; for each subopt structure the percent of
-  base pairs in the suboptimal structure retained from the given
-  structure is found. The mean of the %retention of 1000 suboptimal
-  structures"
-
-  [x]
-  (let [mean-dist (fn [dists-perseq]
-                    (mean dists-perseq))
-        seq-neutrality (fn [seqk] 
-                         (-> (map mean-dist seqk) ;subopt overlap for
-                                        ;each 1-mut neighbor
-                             mean)) ;neutrality
-        ]
-    (reduce (fn [m [nm vals]]
-              (let [neut (map seq-neutrality vals)] ;neutrality of
-                                        ;each seq
-                ;;summary stats of neutrality for sto
-                (assoc m nm {:median (median neut)
-                             :mean (mean neut) ;sto mean neutrality
-                             :sd (sd neut)})))
-            {} x)))
