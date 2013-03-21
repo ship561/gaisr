@@ -40,11 +40,11 @@
             (let [S (.toUpperCase S)
                   n (- j i -1) 
                   result (if (<= (- j i) u) 1
-                             (+ (lazy-get @ztable [i (dec j)] (z i (dec j) S)) ;;j unpaired
-                                (* (e i j S count)
+                             (+' (lazy-get @ztable [i (dec j)] (z i (dec j) S)) ;;j unpaired
+                                (*' (e i j S count)
                                    (lazy-get @ztable [(inc i) (dec j)] (z (inc i) (dec j) S))) ;;i,j pair
                                 (reduce (fn [x k] ;;k,j paired for an intermediate a<k<b
-                                          (+ x (* (e k j S count)
+                                          (+' x (*' (e k j S count)
                                                   (lazy-get @ztable [i (dec k)] (z i (dec k) S))
                                                   (lazy-get @ztable [(inc k) (dec j)] (z (inc k) (dec j) S)))))
                                         0 (range (inc i) (- j u)))))]

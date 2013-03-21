@@ -212,7 +212,7 @@
                         inc))
                   (second avg-subopt))
         [wt & muts]  (-> avg-subopt second transpose)
-        neutrality (map (fn [[wt & muts]]
+        neutrality (map (fn [[wt & muts]] ;;neut of each seq
                           {:wt wt :mut (mean muts)})
                         (second avg-subopt))
         robustness (map (fn [[wt & muts]] (> wt (mean muts))) (second avg-subopt))]
@@ -365,11 +365,16 @@
 
   Once the csv is created, it can be graphed using
   robustness/chart-overlap-sto.R In R, first source the file then
-  'makechart(file)' to execute to produce a graph."
+  'chartoverlap(file)' to execute to produce a graph."
 
   [map-of-per-overlaps & {:keys [outcsv]}]
-  (let [sto (first map-of-per-overlaps)
-        seq-names (map first (-> (read-sto sto :with-names true) :seqs))
+  (let [fsdrop (fn [n file] (->> (fs/split file)
+                                rest
+                                (drop n)
+                                (apply fs/join)))
+        sto (first map-of-per-overlaps)
+        sto-file (str homedir "/" (fsdrop 2 sto)) 
+        seq-names (map first (-> (read-sto sto-file :with-names true) :seqs))
         lines (map (fn [original-seq pts-avg]
                      (loop [os original-seq
                             pa pts-avg
@@ -383,7 +388,7 @@
                                   (rest pa)
                                   (conj new-pts-avg (first pa))))
                          new-pts-avg)))
-                   (-> (read-sto sto) :seqs)
+                   (-> (read-sto sto-file) :seqs)
                    (overlap-per-seq map-of-per-overlaps))
         linecsv (map (fn [nm v]
                        (str/join "," (cons nm v)))
