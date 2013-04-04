@@ -516,15 +516,15 @@
   ;; example, prod below...
   ([coll]
      (let [vs (if (map? coll) (vals coll) coll)]
-       (apply + vs)))
+       (apply +' vs)))
   ([f coll]
      (reduce (fn [x i]
-               (+ x (f i)))
+               (+' x (f i)))
              0 coll))
   ([f coll1 coll2]
      (reduce
       (fn[r c1i]
-        (+ r (sum #(f c1i %1) coll2)))
+        (+' r (sum #(f c1i %1) coll2)))
       0 coll1))
   ([f coll1 coll2 & colls]
      (let [colls (cons coll1 (cons coll2 colls))]
@@ -535,7 +535,7 @@
          ;; args into f
          (reduce
           (fn[r cxi]
-            (+ r (apply sum (fn[& args] (apply f cxi args)) (rest colls))))
+            (+' r (apply sum (fn[& args] (apply f cxi args)) (rest colls))))
           0 (first colls))))))
 
 

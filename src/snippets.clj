@@ -313,50 +313,75 @@
                               [name nm (count (filter #(< nm %) nc)) nc]))
                           iseq))))))))
 
+(defn markov-step
+  "probs are a map with state and probability of occuring {:A 0.1 :H
+  0.5 :T 0.2 :X 0.2}"
+  
+  [probs]
+  (let [cum-probs (reductions + (vals probs))
+        prob-table (map (fn [p label ]
+                          [p label])
+                        cum-probs (keys probs))
+        r (rand)
+        step (->> prob-table
+                  (drop-while #(>= r (first %)))
+                  first
+                  second)]
+    #_(prn prob-table) step))
 
+(def mc
+  {:states ["healthy" "sick"]
+   :observation ["normal" "cold" "dizzy"]
+   :start_probability {"healthy" 0.6 "sick" 0.4}
+   :transition-probability {"healthy" {"healthy" 0.7 "sick" 0.3}
+                            "sick" {"healthy" 0.4 "sick" 0.6}}
+   :emission-probability {"healthy" {"normal" 0.5 "cold" 0.4 "dizzy" 0.1}
+                          "sick" {"normal" 0.1 "cold" 0.3 "dizzy" 0.6}}})
+(defn sim-mc [n]
+  (let [start-state (let [start (->> (get mc :start_probability) markov-step)]
+                      [start
+                       (markov-step (get-in mc [:emission-probability start]))])
+        next-state (fn [[cur-state emit]]
+                     (let [trans (get-in mc [:transition-probability cur-state])
+                           emis (get-in mc [:emission-probability cur-state])]
+                       [(markov-step trans) (markov-step emis)]))
+        ]
+    (->> (iterate #(next-state %) start-state)
+         (take n ))))
+(defn viterbi
+  "finds the most probable state path given a set of observations. for
+  a test case let emissions = [\"normal\" \"cold\" \"dizzy\"]"
 
+  [emissions]
+  (let [hidden-states (keys (mc :start_probability))
+                                        ;ans (sim-mc 3)
+        y emissions ;["normal" "cold" "dizzy"] ;mc steps
+        argmax (fn [x] (last (sort-by second x)))
+        v1k (fn [k obs] (* (get-in mc [:emission-probability k obs]) ;pr(obs|init)
+                          (get-in mc [:start_probability k]))) ;pr(init state)
+        start (argmax (map (fn [state]
+                             [state (v1k state (first y))])
+                           hidden-states))]
+    (loop [y (rest y)
+           path (conj [] start)]
+                                        ;(prn :path path :y y)
+      (if (seq y)
+        (let [obs (first y)
+              vtk (fn [x k obs]
+                    (* (get-in mc [:emission-probability k obs]);pr(obs|new)
+                       (get-in mc [:transition-probability x k]);pr(old->new)
+                       (-> path last second))) ;pr(old state)
+              ]
+          (recur (rest y)
+                 (conj path
+                       (argmax 
+                        (map (fn [newstate]
+                               [newstate (vtk (-> path last first) newstate obs)])
+                             hidden-states)))))
+        path)) ))
+;;(pr old state * pr old->new * pr obs|new)
 
-(let [mc {:states ["healthy" "sick"]
-          :observation ["normal" "cold" "dizzy"]
-          :start_probability {"healthy" 0.6 "sick" 0.4}
-          :transition_probability {"healthy" {"healthy" 0.7 "sick" 0.3}
-                                   "sick" {"healthy" 0.4 "sick" 0.6}}
-          :emission_probability {"healthy" {"normal" 0.5 "cold" 0.4 "dizzy" 0.1}
-                                 "sick" {"normal" 0.1 "cold" 0.3 "dizzy" 0.6}}}
-      start-state (->> (get mc :start_probability) markov-step)
-      next-state (fn [cur-state]
-                   (let [trans (get-in mc [:transition_probability cur-state])]
-                     (markov-step trans)))]
-  (loop [i (range 10)
-         state start-state]
-    (if (seq i)
-      (do (prn state)
-          (recur (rest i)
-                 (next-state state)))
-      )))
-
-
-(defn map-value-lookup [m]
-  (into {} (sort-by key
-                    (reduce (fn [m [v k]]
-                              (assoc m v k)) 
-                            {} (map (fn [v k]
-                                      [v k])
-                                    (reductions + (vals m)) (keys m))))))
-
-(defn markov-step [m]
-  (let [r (rand)]
-    (loop [x (map-value-lookup m)]
-      (let [ff (ffirst x)]
-        (if (> ff r)
-          (get x ff)
-          (do (recur (dissoc x ff))))))))
-
-
-
-
-
-
+  
 
 (def foo ;;takes ~2-2.5hrs to finish at 50 seqs 10 cpus
         (future (doall

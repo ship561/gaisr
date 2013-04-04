@@ -2,12 +2,19 @@
   (:require [clojure.string :as str]
             [clojure.java.shell :as shell]
             [edu.bc.fs :as fs])
-  (:use refold))
+  (:use refold
+        [slingshot.slingshot :only [throw+]]))
 
 (def param-file (let [viennadir (if (fs/directory? "/usr/local/ViennaRNA/")
                                   "/usr/local/ViennaRNA/" 
-                                  (str (fs/homedir) "/bin/ViennaRNA")) ]
-                  (str viennadir "rna_andronescu2007.par")))
+                                  (str (fs/homedir) "/bin/ViennaRNA"))
+                      pfile (str viennadir "rna_andronescu2007.par")
+                      pfile (if (fs/exists? pfile)
+                              pfile
+                              (str viennadir "/misc/rna_andronescu2007.par"))]
+                  (if (fs/exists? pfile)
+                    pfile
+                    (throw+ {:file pfile} "parameter file not exist" ))))
 
 (defn inverse-fold
   "Given a target structure, it will use RNAinverse to find n

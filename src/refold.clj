@@ -59,10 +59,13 @@
               (= c ".")
               (recur (inc i)
                      (cond
-                      (and (< compi i) (pos? compi) (not= "x" (subs st compi (inc compi))))
+                      (and (< compi i)
+                           (pos? compi)
+                           (not= "x" (subs st compi (inc compi))))
                       (str (subs st 0 compi) "." (subs st (inc compi) i) "x" (subs st (inc i)))
                       
-                      (and (pos? compi) (not= "x" (subs st compi (inc compi))))
+                      (and (pos? compi)
+                           (not= "x" (subs st compi (inc compi))))
                       (str (subs st 0 i) "x" (subs st (inc i) compi) "." (subs st (inc compi)))
                       
                       :else

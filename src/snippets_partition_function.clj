@@ -1,7 +1,7 @@
 (ns snippets-partition-function
   (:use clojure.contrib.map-utils))
 
-(def ztable (atom {}))
+
 
 (defn- bp? [b1 b2] ;;b1=base1 b2=base2
   (let [bp #{"AU" "UA" "GC"  "CG" "GU" "UG"}]
@@ -35,7 +35,8 @@
   [i j S & {:keys [count u]
             :or {count false ;count structures
                  u 3}}] ;min loop size
-  (let [_ (reset! ztable {})
+  (let [ztable (atom {})
+        _ (reset! ztable {})
         z (fn z [i j S]
             (let [S (.toUpperCase S)
                   n (- j i -1) 

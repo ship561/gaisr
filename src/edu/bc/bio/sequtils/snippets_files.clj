@@ -75,26 +75,45 @@
   (doseq [[nm sq] seq-lines]
     (cl-format true "~A~40T~A~%" nm sq)))
 
+(defn print-sto
+  "takes sequence lines and a structure line and writes it into a sto
+  format file. the seq-lines needs to be a collection of [name
+  sequence] pairs. structure is a string. Simply prints out to the
+  repl."
+
+  [seq-lines structure]
+  (println "# STOCKHOLM 1.0\n")
+  (doseq [sq seq-lines]
+    (let [[nm sq] (if (vector? sq)
+                    sq
+                    (str/split #"\s+" sq))]
+      (cl-format true "~A~40T~A~%" nm (str/replace-re #"\-" "." sq))))
+  (cl-format true "~A~40T~A~%" "#=GC SS_cons" structure)
+  (println "//"))
+
 (defn aln->sto
   "takes an alignment in Clustal W format and produces a sto file by
    using RNAalifold to determine the structure and then making it into
    a sto file adding header and a consensus line"
 
-  [in-aln out-sto & {:keys [fold_alg]
-                     :or {fold_alg "RNAalifold"}}]
-  (if (= fold_alg "RNAalifold")
-    (let [st (fold-aln in-aln)
-          sq (read-seqs in-aln :type "aln")]
-      (io/with-out-writer out-sto
-        (println "# STOCKHOLM 1.0\n")
-        (doseq [s sq]
-          (let [[nm s] (str/split #"\s+" s)]
-            (cl-format true "~A~40T~A~%" nm (str/replace-re #"\-" "." s))))
-        (cl-format true "~A~40T~A~%" "#=GC SS_cons" st)
-        (println "//"))
-      out-sto) ;return out sto filename
-    ;;else use cmfinder
-    #_(shell/sh "perl" "/home/kitia/bin/gaisr/src/mod_cmfinder.pl" in-aln out-sto)))
+  [in-aln out-sto & {:keys [fold-alg st]
+                     :or {fold-alg "RNAalifold"}}]
+  (cond
+   (identity st) ;structure provided
+   (let [sq (read-seqs in-aln :type "aln")]
+     (io/with-out-writer out-sto
+       (print-sto sq st))
+     out-sto)
+
+   (= fold-alg "RNAalifold") ;structure from RNAalifold
+   (let [st (fold-aln in-aln)
+         sq (read-seqs in-aln :type "aln")]
+     (io/with-out-writer out-sto
+       (print-sto sq st))
+     out-sto) ;return out sto filename
+
+   ;;else use cmfinder
+   #_(shell/sh "perl" "/home/kitia/bin/gaisr/src/mod_cmfinder.pl" in-aln out-sto)))
 
 (defn sto->randsto
   "takes a sto input file and generates a random sto to specified
