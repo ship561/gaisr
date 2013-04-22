@@ -4,7 +4,7 @@
   :jvm-opts ["-Xmx2g"]
   :main invfold
 
-  :dependencies [[org.clojure/clojure "1.5.0-beta1"]
+  :dependencies [[org.clojure/clojure "1.5.1"]
                  [mlabs.jars/clojure-contrib "1.2.0-mlab"]
                  [org.clojure/tools.namespace "0.2.2"]
 
@@ -18,7 +18,7 @@
                  ;;command line options
                  [org.clojure/tools.cli "0.2.2"]
 
-                 [org.clojure.contrib/macro-utils "1.3.0-alpha4"]
+                 ;;[org.clojure.contrib/macro-utils "1.3.0-alpha4"]
                  [org.clojure/tools.macro "0.1.1"]
                  
                  ;;[clj-native "0.9.1-SNAPSHOT"]

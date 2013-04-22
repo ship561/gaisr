@@ -88,10 +88,10 @@
 (defn subopt-overlap-seq
   "Determine the percent overlap of each suboptimal structure of a
   sequence s to the consensus structure. compares against n suboptimal
-  structures.  returns a frequency map where k=%overlap and
+  structures.  returns a frequency map where k=dist and
   v=frequency.
 
-  average is neutrality"
+  average is subopt overlap"
 
   [s cons-keys n]
   (let [[_ substruct] (suboptimals s n :centroid-only false)]
@@ -107,9 +107,11 @@
 
 (defn subopt-overlap-neighbors
   "Finds nsubopt suboptimal structures and then finds the percent
-   overlap of the suboptimal structures to the consensus
-   structure. Returns a list-of-maps where each map is the freqmap of
-   the percent overlap for a 1-mutant neighbor."
+  overlap of the suboptimal structures to the consensus
+  structure. Returns a list-of-maps where each map is the freqmap of
+  the subopt overlap for a 1-mutant neighbor.
+
+  The average is the neutrality"
 
   [s cons-keys & {:keys [ncore nsubopt]
                   :or {ncore 2 nsubopt 1000}}]
@@ -123,11 +125,11 @@
 (defn subopt-overlap-sto
   "This is the main function in the robustness namespace.
 
-   Takes a sto file and finds the suboptimal structure for the WT and
-   each of its 1-mutant neighbors. Returns a vector [sto
-   list-of-lists-of-maps] where each list-of-maps is the percent
-   overlap for a particular sequence and its 1-mutant neighbors. The
-   maps are the particular percent overlap for a 1-mutant neighbor."
+  Takes a sto file and finds the suboptimal structure for the WT and
+  each of its 1-mutant neighbors. Returns a vector [sto
+  list-of-lists-of-maps] where each list-of-maps is the percent
+  overlap for a particular sequence and its 1-mutant neighbors. The
+  maps are the particular percent overlap for a 1-mutant neighbor."
   
   [sto & {:keys [ncore nsubopt altname]
           :or {ncore 6 nsubopt 1000 altname sto}}]
@@ -222,7 +224,7 @@
      :neutrality neutrality
      :robust? robustness}))
 
-(defn subopt-robustness-seq
+(defn subopt-neutrality-seq
   "Find the subopt overlap of a seq and all its 1-mutant
    neighbors. the seq (s) and structure (st) and number of suboptimal
    structures considered (n) must be given. Returns the neutrality
@@ -253,7 +255,7 @@
     [sto
      (map (fn [[nm s]]
             (let [[s st cons-keys] (degap-conskeys s cons)
-                  inv-seq (create-inv-seqs nm st n inv-sto) ;vector of n inverse-folded seqs
+                  inv-seq (create-inv-seqs nm s st n inv-sto) ;vector of n inverse-folded seqs
                   neut (map (fn [x]
                               (subopt-overlap-neighbors x cons-keys :ncore ncore :nsubopt nsubopt))
                             (concat (list s) inv-seq))]

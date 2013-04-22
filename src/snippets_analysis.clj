@@ -279,4 +279,14 @@
                      mut (map #(% :mut) neut)] 
                  [wt mut]))
              foo)))
+  (let [[s st] (remove-gaps "CCACAGCUGCAACCGCUCG..GAACGAGUUU.................AA.GUUUUCCGC..UUGC...........GGAGC.ACUUGUCUUCGGCGAGUCUAAGUCUAAAA"
+                                              ".............(((.((..((((((((......................(.((((....................))))).)))))))).)))))...............")
+                          inv (-> (->> (read-clj "/home/peis/bin/gaisr/trainset2/pos/RF00559-seed.10.inv.clj")
+                                   (into {})) 
+                                  (get "CP000416.1/1005945-1005868")
+                                  first)]
+                      (prn :inv inv) 
+                      (prn :sss s)
+                      (prn :stt st)
+                      (robustness/subopt-robustness-seq s st 1000))
   )
