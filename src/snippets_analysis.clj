@@ -279,4 +279,31 @@
                      mut (map #(% :mut) neut)] 
                  [wt mut]))
              foo)))
+
+  
+  (defn gc-jsd-check
+    "Takes a sto and makes sure the jsd of the wt vs inverse fold seq
+    < 0.01. Also check the GC-content to give some correlation."
+    
+    [sto]
+    (let [;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00167-seed.10.sto"
+          invsto (str (str/butlast 3 sto) "inv.clj")
+          n 1
+          foo (->> (map (fn [[nm wtseq]]
+                          (let [wtdist (probs n (str/replace-re #"\." "" wtseq))
+                                invseqs (->> (read-clj invsto) (into {}))]
+                            (map (fn [inv] 
+                                   [(jensen-shannon wtdist (probs n inv))
+                                    (Math/abs
+                                     (- (GC-content wtseq)
+                                        (GC-content inv)))])
+                                 (invseqs nm))))
+                        ((read-sto sto :with-names true) :seqs))
+                   (apply concat))
+          gc (map second foo)
+          jsd (map first foo)]
+      (prn :gc (mean gc)
+           :jsd (mean jsd)
+           :pearsonCC (pearson-correlation gc jsd))
+      foo)) 
   )

@@ -231,8 +231,8 @@
   [s st n]
   (let [[s st cons-keys] (degap-conskeys s st)]
     (->> (subopt-overlap-neighbors s cons-keys :nsubopt n)
-        (map mean )
-        mean)))
+        (map mean ) ;subopt-overlap
+        mean))) ;neutrality
 
 (defn subopt-robustness
   "Takes an input sto and estimates the significance of the robustness

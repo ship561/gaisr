@@ -82,12 +82,14 @@
                       (sort-by key
                                (reduce (fn [m [[i j] p]]
                                          (assoc m i "(" j ")"))
-                                       (into {}
-                                             (map #(vector %1 %2) (range (count s)) (repeat ".")))
+                                       (->> (map #(vector %1 %2)
+                                                 (range (count s))
+                                                 (repeat "."))
+                                            (into {}))
                                        ;;keeps bases that have over 50%
                                        ;;representation in suboptimal structures
                                        (filter (fn [[[i j] p]] 
-                                                 (and (< i j)
+                                                 (and (< (+ i 3) j)
                                                       (>= p 0.5)))
                                                matrix))))
         struct->vector (fn [st] (map #(if (= \. %) 0 1) (seq st))) ;change structure representation

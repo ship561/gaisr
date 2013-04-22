@@ -163,7 +163,7 @@
 
 (defn make-subset-sto
   "Takes a sto and randomly chooses n sequences to make a new sto. The
-  subset sto will have the same structure as the original minus the
+  subset sto will have the same structure as the original but the
   gapped columns will be removed."
 
   [insto n & {:keys [outfile]}]
