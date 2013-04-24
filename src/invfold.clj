@@ -4,6 +4,7 @@
             [clojure.contrib.io :as io]
             [clojure.contrib.string :as str])
   (:use [edu.bc.utils :only (pxmap)]
+        edu.bc.utils.probs-stats
         edu.bc.utils.fold-ops
         [edu.bc.bio.sequtils.snippets-files
          :only (read-sto change-parens read-clj)]
@@ -63,17 +64,29 @@
    of seqs. Takes a sequence name(nm), structure (st), n inverse seqs
    to make, and outfile. Returns the list of sequences."
 
-  [nm st n outfile]
+  [nm s st n outfile]
   (let [cur-seqs (if (fs/exists? outfile)
                    (read-clj outfile)
                    {nm []})
         cur-n (count (cur-seqs nm))
-        inv-seqs (distinct (lazy-cat (cur-seqs nm)
-                                     (inverse-fold st n :perfect? false)))]
-    (when (< cur-n n)
-      (do (doall inv-seqs)
-          (io/with-out-writer outfile
-            (prn (assoc cur-seqs nm (vec inv-seqs))))))
+        similar-seq (fn [wtseq invcoll thr]
+                      (filter (fn [invseq]
+                                (<  (jensen-shannon (probs 1 wtseq) ;wtdist
+                                                    (probs 1 invseq))
+                                    thr))
+                              invcoll))
+        inv-seqs (->> (map #(similar-seq s % 0.01)
+                           (repeatedly #(inverse-fold st n :perfect? false)))
+                      (lazy-cat (cur-seqs nm))
+                      )
+        ]
+    (when (< cur-n n) 
+      (let [out (doall (->> inv-seqs
+                            flatten
+                            distinct
+                            (take n)))]
+        (io/with-out-writer outfile
+            (prn (assoc cur-seqs nm (vec out))))))
     (take n inv-seqs)))
 
 (defn create-inv-sto
@@ -90,8 +103,8 @@
         f (fn []
             (doall
              (for [[nm s] inseqs]
-               (let [[_ st] (remove-gaps s cons)
-                     x (create-inv-seqs nm st n outfile)]
+               (let [[s st] (remove-gaps s cons)
+                     x (create-inv-seqs nm s st n outfile)]
                  x)
                )))
         fc-g (future-call f)]
@@ -130,10 +143,8 @@
   [& args]
   (let [parse (fn [s] (-> (str/split #" " s) vec))
         [opts _ usage] (cli args
-                            ["-t" "--todo" "files todo" :parse-fn parse
-                             :default todo-files]
-                            ["-d" "--done" "files done" :parse-fn parse
-                             :default done-files]
+                            ["-t" "--todo" "files todo" :parse-fn parse :default todo-files]
+                            ["-d" "--done" "files done" :parse-fn parse :default done-files]
                             ["-n" "--nseqs" "number of inverse seqs to create"
                              :parse-fn #(Integer/parseInt %) :default 100]
                             ["-nc" "--ncpu" "number of cpus to use"

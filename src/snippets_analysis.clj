@@ -290,7 +290,9 @@
           invsto (str (str/butlast 3 sto) "inv.clj")
           n 1
           foo (->> (map (fn [[nm wtseq]]
-                          (let [wtdist (probs n (str/replace-re #"\." "" wtseq))
+                          (let [wtseq (-> (str/replace-re #"\." "" wtseq)
+                                          .toUpperCase)
+                                wtdist (probs n wtseq)
                                 invseqs (->> (read-clj invsto) (into {}))]
                             (map (fn [inv] 
                                    [(jensen-shannon wtdist (probs n inv))
@@ -305,5 +307,5 @@
       (prn :gc (mean gc)
            :jsd (mean jsd)
            :pearsonCC (pearson-correlation gc jsd))
-      foo)) 
+      foo))
   )
