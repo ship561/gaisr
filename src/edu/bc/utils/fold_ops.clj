@@ -108,6 +108,36 @@
       [0 map-structures]) ;returns all suboptimal structures
     ))
 
+(ns-unmap 'edu.bc.utils.fold-ops 'fold2)
+(defmulti fold2 (fn [s & args]
+                  ((or (first args) {}) :foldtype)))
+
+(defmethod fold2 ::mfe [s args]
+  (-> ((shell/sh "RNAfold"
+                 "-P" param-file
+                 "--noPS"
+                 :in s )
+       :out)
+      (str/split-lines)
+      second
+      (str/split #" ")
+      first))
+
+(defmethod fold2 ::subopt [s args] 
+  (->> ((shell/sh "RNAsubopt"
+                  "-p" (str (args :n))        ;samples according to
+                                        ;Boltzmann distribution
+                  :in s)
+        :out)
+       str/split-lines
+       (remove #(re-find #"[^\(\)\.]" %))))
+
+(defmethod fold2 ::centroid [s args]
+  (first (suboptimals s (args :n))))
+
+(defmethod fold2 :default [s]
+  (fold2 s {:foldtype ::mfe}))
+
 (defn fold
   "Folds a sequence of RNA and returns only the target
    structure. Target structure can either be centroid or MFE."
@@ -161,10 +191,11 @@
        first))
 
 (defn bpdist
-  "finds the base-pair distance between 2 structures"
+  "finds the distance between 2 structures. uses tree edit distance by
+  default. when bpdist = true, uses base pair distance"
 
-  [st1 st2]
-  (->> ((shell/sh "RNAdistance" 
+  [st1 st2 & {:keys [bpdist]}]
+  (->> ((shell/sh "RNAdistance" (if bpdist "-DP" "")
                   :in (str st1 "\n" st2))
         :out)
        (re-find #"\d+" )

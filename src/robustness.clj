@@ -61,13 +61,30 @@
 (defn bpsomething
   "uses the <1-d/L> method mentioned in Borenstein miRNA paper."
   
-  [s st]
+  [s st & {:keys [bp]}]
   (let [neighbors (mutant-neighbor s)
         len (count st)
         dist (fn [neighbor]
-               (- 1 (/ (bpdist st (fold neighbor))
+               (- 1 (/ (bpdist st (fold neighbor) :bpdist bp)
                        len)))]
     (mean (map dist neighbors))))
+
+(defn pccsomething
+  "uses the pearsons correlation coefficient comparing the wt
+  structure to the mutant structure to find the disruption to the
+  structure. Returns a value bounded by [0 1]."
+
+  [s st]
+  (let [n 10000
+        stvec (map #(if (= \. %) 0 1) (seq st))
+        neighbors (mutant-neighbor s)
+        dist (fn [neighbor]
+               (let [mutst (second (suboptimals neighbor n))]
+                 (if (not-every? zero? mutst)
+                   (- 1 (* 0.5
+                           (- 1 (pearson-correlation stvec mutst))))
+                   0)))]
+    (mean (pxmap dist 1 neighbors))))
 
 ;;;-----------------------------------------------------------------------------
 ;;;
@@ -103,9 +120,9 @@
            (concat (list s) neighbors))))
 
 (defn subopt-overlap-seq
-  "Determine the percent overlap of each suboptimal structure of a
-  sequence s to the consensus structure. compares against n suboptimal
-  structures.  returns a frequency map where k=dist and
+  "Determine the percent overlap of each n suboptimal structure of a
+  sequence s to the consensus structure (cons-keys). compares against
+  n suboptimal structures.  returns a frequency map where k=dist and
   v=frequency.
 
   average is subopt overlap"
@@ -1080,8 +1097,10 @@
 
 
 
+
+
 ;;;for finding the bpdistance
-(let [fun-sto (fn [sto]
+(let [fun-sto (fn [sto distfun]
                 (let [{l :seqs cons :cons} (read-sto sto :with-names true)
                       cons (change-parens (first cons))
                       altname sto]
@@ -1094,7 +1113,7 @@
                          ;;finds 1000 suboptimal structures and
                          ;;finds the percent overlap of
                          ;;suboptimal structures to the cons struct
-                         (bpsomething s st)))
+                         (distfun s st)))
                                         ;ncore
                      l))] ;l=list of seqs in the sto
                   ))
@@ -1103,6 +1122,7 @@
                                        ["-f" "--file" "file(s) to check neutrality for"
                                         :parse-fn #(str/split #" " %) ;create list of files
                                         :default nil]
+                                       ["-D" "--distfn" "distance function to use" :default bpsomething]
                                        ["-o" "--outfile" "file to write to" :default nil]
                                        ["-di" "--dir" "dir in which files are located" :default (str homedir "/bin/gaisr/trainset2/")]
                                        ["-p" "--pos" "check only positive training files" :default nil :flag true]
@@ -1117,12 +1137,15 @@
                               (opts :neg) "neg/"
                               ))
                    fsto (or (opts :file)
-                            (filter #(re-find #"\.sto" %) (fs/listdir fdir)))
+                            (fs/directory-files fdir "sto"))
                    stos (if (opts :debug)
                           (take 3 (filter #(re-seq #"RF00555-seed" %) fsto))
                           fsto)
-                   neutrality (for [sto stos] ;loop over stos
-                                (fun-sto (str fdir sto)))]
+                   neutrality (pxmap (fn [sto] ;loop over stos
+                                       (prn :workingon (fs/basename sto))
+                                       (fun-sto sto (opts :distfn)))
+                                     20
+                                     stos)]
                (cond
                 (or (nil? args) (opts :help)) (print usage) ;usage help
                 (not (nil? (opts :outfile))) (io/with-out-writer (opts :outfile)
@@ -1130,7 +1153,7 @@
                 :else
                 (doall neutrality))))
       ]
-  (main "-p"))
+  (main "-p" "-d" "-D" #(bpsomething %1 %2 :bp true)))
 
 
 
