@@ -205,8 +205,22 @@ if it is not or if the file cannot be deleted."
   (map #(join directory %)
        (filter #(re-find pat %) (listdir directory))))
 
+#_(defn- fix-file-regex [l]
+    (-> l str/trim (str "$") ((partial str/replace-re #"\*" ".*"))))
+
 (defn- fix-file-regex [l]
-  (-> l str/trim (str "$") ((partial str/replace-re #"\*" ".*"))))
+  (->> l str/trim  (str/replace-re #"\*" ".*")))
+
+(defn re-directory-files
+  "Return full path qualified file specifications for all files in
+   directo ry whose name is matched by re.  RE is a regexp (#\"regex
+   def\" literal or a string that defines a regexp (which will be
+   turned into a pattern).
+  "
+  [directory re]
+  (_re-dir-files directory (if (string? re)
+                             (re-pattern (fix-file-regex re))
+                             re)))
 
 (defn directory-files
   "Return full path qualified file specifications for all files in
@@ -216,16 +230,11 @@ if it is not or if the file cannot be deleted."
    So, giving -new.sto for example, works as well.
   "
   [directory file-type]
-  (_re-dir-files directory (re-pattern (str file-type "$"))))
+  #_(_re-dir-files directory (re-pattern (str file-type "$")))
+  #_(_re-dir-files directory (re-pattern (str (fix-file-regex file-type) "$")))
+  (re-directory-files directory (re-pattern (str (fix-file-regex file-type) "$"))))
 
-(defn re-directory-files
-  "Return full path qualified file specifications for all files in
-   directo ry whose name is matched by re.  RE is a regexp (#\"regex
-   def\" literal or a string that defines a regexp (which will be
-   turned into a pattern).
-  "
-  [directory re]
-  (_re-dir-files directory (re-pattern (fix-file-regex re))))
+
 
 
 
