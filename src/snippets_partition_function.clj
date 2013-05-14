@@ -1,11 +1,10 @@
 (ns snippets-partition-function
   (:use clojure.contrib.map-utils))
 
-
-
 (defn- bp? [b1 b2] ;;b1=base1 b2=base2
   (let [bp #{"AU" "UA" "GC"  "CG" "GU" "UG"}]
-    (contains? bp (str b1 b2))))
+    (contains? bp (str b1 b2)))
+  )
 
 (defn- e
   "Energy function = 1 to count structures
@@ -30,25 +29,28 @@
   The probability of a base pair i,j occuring is given by:
   Pr(i,j) = (* Z(1,i-1) E(s1 s2) Z(i+1,j-1) Z(j+1,n))/Z(1,n)
 
-  count= only count structures, u=min loop size"
+  count= only count structures, u=min loop size
+
+  example:
+  AUGCUAGUACGGAGCGAGUCUAGCGAGCGAUGUCGUGAGUACUAUAUAUGCGCAUAAGCCACGU"
   
   [i j S & {:keys [count u]
             :or {count false ;count structures
                  u 3}}] ;min loop size
   (let [ztable (atom {})
-        _ (reset! ztable {})
+        S (.toUpperCase S)
         z (fn z [i j S]
-            (let [S (.toUpperCase S)
-                  n (- j i -1) 
+            (let [n (- j i -1) 
                   result (if (<= (- j i) u) 1
                              (+' (lazy-get @ztable [i (dec j)] (z i (dec j) S)) ;;j unpaired
-                                (*' (e i j S count)
-                                   (lazy-get @ztable [(inc i) (dec j)] (z (inc i) (dec j) S))) ;;i,j pair
-                                (reduce (fn [x k] ;;k,j paired for an intermediate a<k<b
-                                          (+' x (*' (e k j S count)
-                                                  (lazy-get @ztable [i (dec k)] (z i (dec k) S))
-                                                  (lazy-get @ztable [(inc k) (dec j)] (z (inc k) (dec j) S)))))
-                                        0 (range (inc i) (- j u)))))]
+                                 (*' (e i j S count)
+                                     (lazy-get @ztable [(inc i) (dec j)] (z (inc i) (dec j) S))) ;;i,j pair
+                                 (reduce (fn [x k] ;;k,j paired for an intermediate a<k<b
+                                           (+' x
+                                               (*' (e k j S count)
+                                                   (lazy-get @ztable [i (dec k)] (z i (dec k) S))
+                                                   (lazy-get @ztable [(inc k) (dec j)] (z (inc k) (dec j) S)))))
+                                         0 (range (inc i) (- j u)))))]
               (swap! ztable #(assoc % [i j] result))
               result))]
     (z i j S)
