@@ -4,6 +4,8 @@
   :jvm-opts ["-Xmx2g"]
   :main invfold
 
+  :java-source-paths ["src-java/"]
+  
   :dependencies [[org.clojure/clojure "1.5.1"]
                  [mlabs.jars/clojure-contrib "1.2.0-mlab"]
                  [org.clojure/tools.namespace "0.2.2"]
