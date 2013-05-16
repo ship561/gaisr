@@ -60,14 +60,14 @@
                (parse-output))))))
 
 (defn -main [& args]
-  (let [files (fs/re-directory-files (str (fs/homedir) "/bin/gaisr/trainset2/pos/") #"\.\d\.sto$")
-        results (doall (map RNAmute-dist files))]
+  (let [files (take 2 (fs/re-directory-files (str (fs/homedir) "/bin/gaisr/trainset2/pos/") #"\.\d\.sto$"))
+        results (->> (map #(do (prn %)
+                               (RNAmute-dist %)) files)
+                     (apply concat)
+                     vec)]
     (io/with-out-writer (str (fs/homedir) "/bin/gaisr/robustness/rnamute-data.clj")
       (println ";;;data for rnamute program running it on all seqs in trainset2/pos with re=\".\\d.sto$\". returns a vector of vectors of the average distance already normalized using <1-d/L>. Vector format is [dotbracket-dist shapiro-dist].")
-      (->> results
-           (apply concat )
-           vec
-           prn))))
+      (prn results))))
 
 (test/deftest- footest
   
