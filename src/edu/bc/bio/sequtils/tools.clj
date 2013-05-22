@@ -41,7 +41,7 @@
             [clojure.contrib.io :as io]
             [clojure-csv.core :as csv]
             [edu.bc.fs :as fs])
-  (:use clojure.contrib.math
+  (:use [clojure.contrib.math :as math]
         edu.bc.utils
         edu.bc.utils.probs-stats
         [edu.bc.bio.seq-utils :only [norm-elements degap-seqs]]
@@ -313,8 +313,8 @@
          (io/with-out-writer bad-file
            (doseq [[nm-coord gapped degapped actual dup?] bad]
              (println nm-coord (if dup? "is DUP!" "") "\n"
-                      gapped "\n" degapped "\n"
-                      actual "\n"))))
+                      :GAP gapped "\n" :DEG degapped "\n"
+                      :ACT actual "\n"))))
 
        (when (fs/exists? ids) (io/delete-file ids))
        (when (fs/exists? blastout) (io/delete-file blastout))
@@ -368,6 +368,18 @@
 ;;; example, RFAM stos can become "refseqed".
 
 
+(defn refseq-entry?
+  "Returns whether entry-nm is a valid refseq entry for our
+   purposes (which bascially means it is in archea or bacteria...)
+   Returns nil if not, generalized true if yes.
+  "
+  [entry-nm]
+  ;; Weird shinanigans due to cross namespace dependencies and
+  ;; orderings.  I'm not saying this is a 'good' way to achieve the
+  ;; result, but for now it seems the least disruptive...
+  (let [x (resolve (symbol "edu.bc.bio.gaisr.new-rnas" "*name-id-map*"))]
+    (@x entry-nm)))
+
 (defn get-embl-blast-candidates
   "Takes an ncbi blast csv output file result from blasting an embl
    entry input and returns an embl-id to ncbi-ids map.  The csv has
@@ -384,7 +396,8 @@
            nc-nm (->> (nth x 4) (str/split #"\|") last
                       (re-find #"^[A-Za-z_0-9]+"))
            ev (Double. (nth x 3))]
-       (if (and (= (second x) "1")
+       (if (and (refseq-entry? nc-nm)
+                (= (second x) "1")
                 ;; somewhat arbitrary, but real examples should
                 ;; have very low evalues
                 (< ev 1e-05))
@@ -465,6 +478,40 @@
 ;;; ----------------------------------------------------------------------
 ;;;
 
+(defn get-entry-set
+  "Helper function for 'entry file' set operations.  Creates a set of
+   entries from the file F (fna, hitfna, sto, aln, and gaisr csv) with
+   name, start, stop and strand information if FULL is true or just
+   names if FULL is false.
+  "
+  [full f]
+  (let [f-ncs (read-seqs f :info :names)]
+    (if full
+      (set f-ncs)
+      (->> f-ncs (map #(first (entry-parts %))) set))))
+
+(defn- do-entry-file-set-op
+  "Helper function for 'entry file' set operations.  Takes the entry
+   sets ES1 and ES2 (as obtained from get-entry-set), and performs the
+   set operation OPF (a set operation function) on them.
+  "
+  ([opf es1 es2]
+     (opf es1 es2))
+  ([opf es1 es2 & ess]
+     (reduce (fn[S es] (opf S es)) (opf es1 es2) ess)))
+
+(defn- do-entry-file-set-op-with-seqs
+  "Helper function for 'entry file' set operations.  Like
+   do-entry-file-set-op, but returns corresponding sqs for the result
+   entry set as well.  Uses the full entry (name/start-end/(1|-1)) as
+   obtained from get-entry-set with parameter full true.
+  "
+  [opf es1 es2 & ess]
+  (let [eset (apply do-entry-file-set-op opf es1 es2 ess)]
+    (reduce (fn[V entry] (conj V (gen-name-seq entry)))
+            [] eset)))
+
+
 (defn entry-file-intersect
   "Intersect the entry sets in the files f1 and f2 or f1, f2 and
    remaining fs.  Full is true or false.  If true, entries must fully
@@ -475,30 +522,13 @@
    hitfna), sto, aln, and gaisr csv.
   "
   ([full f1 f2]
-     (let [f1-ncs (read-seqs f1 :info :names)
-           f1-ncs (if full
-                    (set f1-ncs)
-                    (->> f1-ncs
-                         (map #(first (entry-parts %)))
-                         set))
-           f2-ncs (read-seqs f2 :info :names)
-           f2-ncs (if full
-                    (set f2-ncs)
-                    (->> f2-ncs
-                         (map #(first (entry-parts %)))
-                         set))]
-       (set/intersection f1-ncs f2-ncs)))
+     (do-entry-file-set-op
+      set/intersection
+      (get-entry-set full f1) (get-entry-set full f2)))
   ([full f1 f2 & fs]
-     (reduce (fn[S f]
-               (let [f-ncs (read-seqs f :info :names)
-                     f-ncs (if full
-                             (set f-ncs)
-                             (->> f-ncs
-                                  (map #(first (entry-parts %)))
-                                  set))]
-                 (set/intersection S f-ncs)))
-             #{} (conj fs f1 f2))))
-
+     (apply do-entry-file-set-op
+            set/intersection
+            (map #(get-entry-set full %) (cons f1 (cons f2 fs))))))
 
 (defn entry-file-intersect-with-seqs
   "Like entry-file-intersect, but returns corresponding sqs for the
@@ -509,16 +539,28 @@
    resulting sequence of pairs.
   "
   [f1 f2 & fs]
-  (let [efi-set (apply entry-file-intersect true f1 f2 fs)
-        sqf (->> [f1 f2]
-                 (filter #(not (in (fs/ftype %) ["ent" "csv"])))
-                 first)
-        id-sq-map (when sqf (->> sqf (#(read-seqs % :info :both)) (into {})))]
-    (reduce (fn[V entry]
-              (conj V [entry (if id-sq-map
-                               (id-sq-map entry)
-                               (gen-name-seq entry))]))
-            [] efi-set)))
+  (apply do-entry-file-set-op-with-seqs
+         set/intersection
+         (map #(get-entry-set true %) (cons f1 (cons f2 fs)))))
+
+
+(defn entry-file-difference
+  "Set difference the entry sets in the files f1 and f2 or f1, f2 and
+   remaining fs.  Full is true or false.  If true, entries must fully
+   match (name, start, end and strand) to be included in difference.
+   If false, only the names are used to match.  Returns the resulting
+   set of entries sans sequences.  See entry-file-difference-with-seqs
+   to include sequences as well.  File types may be fasta (fna,
+   hitfna), sto, aln, and gaisr csv.
+  "
+  ([full f1 f2]
+     (do-entry-file-set-op
+      set/difference
+      (get-entry-set full f1) (get-entry-set full f2)))
+  ([full f1 f2 & fs]
+     (apply do-entry-file-set-op
+            set/intersection
+            (map #(get-entry-set full %) (cons f1 (cons f2 fs))))))
 
 
 
@@ -743,6 +785,176 @@
 
 
 
+;;; ------------------------------------------------------------------------;;;
+;;;                            Infernal Tools                               ;;;
+
+
+(defn summary-map [motif-sto-file]
+  (let [m (into {}
+                (map #(let [[x y] (str/split #"=" (str/trim %))]
+                        [(keyword (str/replace-re #"_" "-" (str/lower-case x)))
+                         (Float. y)])
+                     (str/split
+                      #"\t" (runx "summarize" "-w" motif-sto-file))))
+        species-cnt (count
+                     (frequencies
+                      (map #(second (re-find #"#=GS\s+(\S+):" %))
+                           (filter #(re-find #"DE" %)
+                                   (str/split #"\n" (slurp motif-sto-file))))))]
+    (assoc m :species-cnt species-cnt :motif motif-sto-file)))
+
+(defn rank-em [summary-maps]
+  (sort-by
+   #(% :rank) >
+   (map
+    (fn[sm]
+      (let [sid (sm :seq-id) ; % seq identical
+            sid (if (<= sid 0) 1 sid)]
+        (assoc sm
+          :rank
+          (* (sm :species-cnt) (math/sqrt (* (+ (sm :conserved-pos) 0.2)
+                                         (/ (sm :bp) sid)))
+             (inc (java.lang.Math/log (/ (sm :num) (sm :species-cnt))))))))
+    summary-maps)))
+
+(defn cmf-post-process [motif-sto-filespec
+                        & {lt :lt ut :ut w :w
+                           :or {lt 10 ut nil s true w nil}}]
+  (let [infile (fs/fullpath motif-sto-filespec)
+        outfile (str infile ".filtered")
+        cmfpath (get-tool-path :cmfinder)
+        cmfiltercmd (str cmfpath "filter.pl")
+        cmdargs ["-s" "-lt" (str lt)]
+        cmdargs (if ut (conj cmdargs "-ut" (str ut)) cmdargs)
+        cmdargs (conj cmdargs infile outfile)]
+    (assert-tools-exist [cmfiltercmd])
+    (runx cmfiltercmd cmdargs)
+    outfile))
+
+
+(defn infernal-2+?
+  "Determine whether the version of Infernal being called upon is post
+   1.0 (1.1+ basically).  We need this as later versions differ in
+   both their output format and the command arguments that they
+   use (in particular, --cpu, for thread usage control).
+  "
+  []
+  (let [p (->> (get-tool-path :infernal)
+               fs/split
+               (take-until #(= % "bin"))
+               (apply fs/join))]
+    (> (->> p fs/normpath fs/split last (str/split #"\.")
+            second first str Integer.) 0)))
+
+
+(defn mk-infernal-cmd
+  "Build and check the canonical form of an Infernal command for us.
+   Checks that the command exists on the path, the version of Infernal
+   and cpu use (if later than 1.0.*), and folds in options.  cmd is
+   the base command as string.  opts is either a string of space
+   separated options (just like on cmdline) or a vector where all
+   pieces are separate elements.
+
+   Ensures command exists; returns the vector for command appropriate
+   for runx.
+  "
+  [cmd opts]
+  (let [opts (vec (map str (if (string? opts) (str/split #" " opts) opts)))
+        opts-cpus? (in "--cpu" opts)
+        infernal-path (get-tool-path :infernal)
+        cmdpath (str infernal-path cmd)
+        threads (cond opts-cpus? nil ; explicitly given in opts
+                      (and (not= cmd "cmbuild") (infernal-2+?)) ["--cpu" "1"]
+                      :else nil)
+        infcmd `[~cmdpath ~@threads ~@opts]]
+    (assert-tools-exist [cmdpath])
+    infcmd))
+
+(defn cmbuild
+  "Construct and issue an Infernal cmbuild command on alignment (sto!)
+   file stofile.  OPTS is a set of optional arguments given as either
+   a space separated string or a vector of strings.  Defaults to no
+   options (the -F option is automatically incorporated for the output
+   cmfile).  The output cmfile has a canonical name based on stofile -
+   \".cm\" is appended as file type.
+
+   Ex: L20-auto-1.sto --> L20-auto-1.sto.cm
+
+   Returns the cmfile spec as result.
+  "
+  [stofile & {:keys [opts]}]
+  (let [cmbuildcmd (first (mk-infernal-cmd "cmbuild" opts))
+        stofile (fs/fullpath stofile)
+        cmfile (-> stofile
+                   (#(str/split #"\." %))
+                   (#(str (first %) "."
+                          (last (if (> (count %) 2) (butlast %) %))))
+                   (str ".cm"))]
+    (runx cmbuildcmd "-F" cmfile stofile)
+    cmfile))
+
+(defn cmcalibrate
+  "Construct and issue an Infernal cmcalibrate command on previously
+   built cm in cmfile.
+
+   PAR controls the number of MPI processes, _not_ the number of
+   threads.  Threads are only available on version 1.1+.  On thread
+   versions, the default is still to use mpi with an i/o thread (--cpu
+   1).
+
+   OPTS contains any other options that may be desired as either a
+   space separated string or as a vector of strings where all
+   parameters and their values are separate elements.
+
+   Returns the calibrated cmfile spec (same as input) as result.
+  "
+  [cmfile & {:keys [par opts]
+             :or {par 3 opts (if (infernal-2+?) ["--cpu" "4"] ["--mpi"])}}]
+  (let [cmcalibratecmd (mk-infernal-cmd "cmcalibrate" opts)
+        cmfile (fs/fullpath cmfile)
+        mpirun "mpirun"
+        mpiargs `["-np" ~(str par) ~@cmcalibratecmd ~cmfile]]
+    (if (infernal-2+?)
+      (apply runx (conj cmcalibratecmd cmfile))
+      (runx mpirun mpiargs))
+    cmfile))
+
+(defn cmsearch
+  "Construct and issue an Infernal cmsearch command on previously
+   built/calibrated cm in cmfile against the seqs of interest in
+   'database' fna-file (a fasta file of sequences of interest).
+
+   PAR controls the number of MPI processes, _not_ the number of
+   threads.  Threads are only available on version 1.1+.  On thread
+   versions, the default is still to use mpi with an i/o thread (--cpu
+   1).
+
+   OPTS contains any other options that may be desired as either a
+   space separated string or as a vector of strings where all
+   parameters and their values are separate elements.
+
+   Output is placed in OUTFILE.  This outfile spec is returned as
+   result.
+  "
+  [cmfile fna-file outfile
+   & {:keys [par eval opts]
+      :or {par 3 eval 1.0
+           opts (if (infernal-2+?) ["--mid" "--cpu" "4"] ["--mpi"])}}]
+  (let [opts (if (string? opts)
+               (str "-E " eval " " opts)
+               (->> opts (cons eval) (cons "-E")))
+        cmsearchcmd (mk-infernal-cmd "cmsearch" opts)
+        cmfile (fs/fullpath cmfile)
+        dbfile (fs/fullpath fna-file)
+        outfile (fs/fullpath outfile)
+        mpirun "mpirun"
+        mpiargs `["-np" ~(str par) ~@cmsearchcmd ~cmfile ~dbfile]]
+    (io/with-out-writer outfile
+      (print (if (infernal-2+?)
+               (apply runx (conj cmsearchcmd cmfile dbfile))
+               (runx mpirun mpiargs))))
+    outfile))
+
 
 (defn cmalign
   "Run an automated parallelized cmalign on originating covariant
@@ -757,7 +969,7 @@
    targets that have been placed in seqfile.
   "
   [cm seqfile outfile
-   & {opts :opts par :par :or {opts ["-q" "-1"] par 3}}]
+   & {:keys [opts par] :or {opts ["-q" "-1"] par 3}}]
   (let [infernal-path (get-tool-path :infernal)
         cmaligncmd (str infernal-path "cmalign")
         cmfile (fs/fullpath cm)

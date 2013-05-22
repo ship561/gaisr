@@ -1,17 +1,26 @@
 (ns edu.bc.fs
   ^{:doc "File system utilities in Clojure"
-    :author "Miki Tebeka <miki.tebeka@gmail.com>"}
+    :author "Miki Tebeka <miki.tebeka@gmail.com>, Jon Anthony"}
   (:refer-clojure :exclude [empty?])
   (:require [clojure.contrib.io :as io]
             [clojure.contrib.string :as str]
             [clojure.zip :as zip])
   (:import java.io.File
+           [java.nio.file FileSystems Path Files]
            java.io.FileInputStream
            java.io.FileOutputStream
            java.io.FilenameFilter))
 
 ;;; (compile 'edu.bc.fs)
 
+(comment ;; Somehow somday maybe make this work??
+(-> (FileSystems/getDefault)
+    (.getPath "/usr/local/Infernal" (into-array [""])))
+(Files/readAttributes
+ (-> (FileSystems/getDefault)
+     (.getPath "/usr/local/Infernal" (into-array [""])))
+ "basic:*" (make-array java.nio.file.LinkOption 0))
+)
 
 (def separator File/separator)
 
@@ -98,6 +107,13 @@
   "Return true if path is writeable."
   [path]
   (.canWrite (io/file path)))
+
+(defn symbolic-link?
+  "Return true if path denotes a symbolic link, false otherwise"
+  [path]
+  (Files/isSymbolicLink
+   (-> (FileSystems/getDefault)
+       (.getPath path (into-array [""])))))
 
 
 
@@ -205,22 +221,17 @@ if it is not or if the file cannot be deleted."
   (map #(join directory %)
        (filter #(re-find pat %) (listdir directory))))
 
-#_(defn- fix-file-regex [l]
-    (-> l str/trim (str "$") ((partial str/replace-re #"\*" ".*"))))
-
 (defn- fix-file-regex [l]
-  (->> l str/trim  (str/replace-re #"\*" ".*")))
+  (-> l str/trim (str "$") ((partial str/replace-re #"\*" ".*"))))
 
 (defn re-directory-files
   "Return full path qualified file specifications for all files in
-   directo ry whose name is matched by re.  RE is a regexp (#\"regex
-   def\" literal or a string that defines a regexp (which will be
-   turned into a pattern).
+   directory whose name ends with a string matched by re.  RE is a
+   regexp (#\"regex def\" literal or a string that defines a
+   regexp (which will be turned into a pattern).
   "
   [directory re]
-  (_re-dir-files directory (if (string? re)
-                             (re-pattern (fix-file-regex re))
-                             re)))
+  (->> re str fix-file-regex re-pattern (_re-dir-files directory)))
 
 (defn directory-files
   "Return full path qualified file specifications for all files in
@@ -230,11 +241,8 @@ if it is not or if the file cannot be deleted."
    So, giving -new.sto for example, works as well.
   "
   [directory file-type]
-  #_(_re-dir-files directory (re-pattern (str file-type "$")))
-  #_(_re-dir-files directory (re-pattern (str (fix-file-regex file-type) "$")))
-  (re-directory-files directory (re-pattern (str (fix-file-regex file-type) "$"))))
-
-
+  ;; REFACTOR to ues re-directory-files???
+  (_re-dir-files directory (re-pattern (str file-type "$"))))
 
 
 
@@ -328,7 +336,7 @@ if it is not or if the file cannot be deleted."
 
 
 ; Taken from https://github.com/jkk/clj-glob. (thanks Justin!)
-(defn- glob->regex
+(defn glob->regex
   "Takes a glob-format string and returns a regex."
   [s]
   (loop [stream s
@@ -336,7 +344,9 @@ if it is not or if the file cannot be deleted."
          curly-depth 0]
     (let [[c j] stream]
         (cond
-         (nil? c) (re-pattern (str (if (= \. (first s)) "" "(?=[^\\.])") re))
+         (nil? c) (re-pattern (str (if (= \. (first s)) "" "(?=[^\\.])")
+                                   re ; if s didn't end in *, force eol
+                                   (if (= \* (last re)) "" "$")))
          (= c \\) (recur (nnext stream) (str re c c) curly-depth)
          (= c \/) (recur (next stream) (str re (if (= \. j) c "/(?=[^\\.])"))
                          curly-depth)
@@ -355,11 +365,7 @@ if it is not or if the file cannot be deleted."
   (let [parts (split pattern)
         root (if (= (count parts) 1) "." (apply join (butlast parts)))
         regex (glob->regex (last parts))]
-    (map #(.getPath %) (seq (.listFiles (File. root)
-                                        (reify FilenameFilter
-                                          (accept [_ _ filename]
-                                            (if (re-find regex filename)
-                                              true false))))))))
+    (map #(join root %) (filter #(re-find regex %) (listdir root)))))
 
 
 

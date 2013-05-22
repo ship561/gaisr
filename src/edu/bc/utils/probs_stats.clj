@@ -310,7 +310,7 @@
    to assign to n.  Lastly, if single numbers are given, their weight
    is taken as simply 1.  Effectively returns:
 
-     let c* (flattened-weighted-seq coll)
+     let c* (flatten-pair-coll coll)
          cnt (count c*)
        (/ (sum c*) cnt)
 
@@ -327,8 +327,8 @@
           (let [coll (if (map? coll) (vals coll) coll)]
             (/ (sum coll)
                (count coll)))))))
-     ([x & xs]
-        (mean (cons x xs))))
+  ([x & xs]
+     (mean (cons x xs))))
 
 (defn median
   "Compute the median of the given collection COLL.  If coll is a
@@ -361,8 +361,16 @@
    use (vals coll).  Returns average of squared differences of xs in
    coll with 'mean' of coll.  The functions distfn and avgfn are used
    for distances of points in coll and the averaging function.  Or,
-   the 'mean' can be given explicitly as M.  The single parameter case
-   uses '-' as distfn and 'mean' as avgfn.
+   the 'mean' can be given explicitly as M.
+
+   The rfn function is the 'reducer' function to use for calculating
+   the set of squared differences.  It defaults to 'map', but the user
+   can change this to some variant of fold, most typically xfold, to
+   parallelize the computation for large collections and/or expensive
+   distfns (such as various RE functions).
+
+   The single parameter case uses '-' as distfn and 'mean' as avgfn
+   and 'map' as the reducer.
   "
   ([coll]
      ;; Uses Var(X) = E(sqr X) - (sqr E(X))
@@ -370,10 +378,10 @@
           (mean (reduce (fn [m [v w]] (assoc m (sqr v) w)) {} coll))
           (mean (map sqr coll)))
         (sqr (mean coll))))
-  ([coll & {:keys [distfn avgfn m] :or {distfn - avgfn mean}}]
+  ([coll & {:keys [distfn avgfn m rfn] :or {distfn - avgfn mean rfn map}}]
      (let [coll (if (map? coll) (vals coll) coll)
            m (if m m (avgfn coll))]
-       (mean (map #(sqr (distfn % m)) coll)))))
+       (mean (rfn #(sqr (distfn % m)) coll)))))
 
 (defn std-deviation
   "Compute the standard deviation of collection COLL.  If coll is a
@@ -432,7 +440,9 @@
      let N (count X)
          mux (mean X)
          muy (mean Y)
-      (sum (fn[xi yi] (/ (- xi mux) (- yi muy) (dec N))) X Y)
+      (sum (fn[xi yi] (/ (* (- xi mux) (- yi muy)) (dec N))) X Y)
+
+      (the (dec N) would be just N, if using true populations)
 
       which, by some algebra, is E(XY) - E(X)E(Y).
 
@@ -470,7 +480,7 @@
         xs (getvs X)
         ys (getvs Y)]
     (if (not= (count xs) (count ys))
-      (raise :type :invalid-oper
+      (raise :type :invalid-operation
              :msg "Covariance of X & Y requires = size sample sets"
              :X X :Y Y)
       (- (mean (map * xs ys))
@@ -499,7 +509,7 @@
   "
   [X Y]
   (let [prod-stdevs (* (std-deviation X) (std-deviation Y))]
-    (if (= 0 prod-stdevs)
+    (if (zero? prod-stdevs)
       (raise :type :invalid-operation
              :msg "Correlation only defined for finite nonzero stdevs"
              :X X :Y Y

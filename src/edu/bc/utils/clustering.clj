@@ -38,7 +38,8 @@
   (:require [clojure.contrib.math :as math]
             [clojure.contrib.string :as str]
             [clojure.set :as set]
-            [edu.bc.fs :as fs])
+            [edu.bc.fs :as fs]
+            [edu.bc.utils.graphs :as gr])
 
   (:use edu.bc.utils
         edu.bc.utils.probs-stats
@@ -61,6 +62,37 @@
    :else
    (raise :type :illegal-params
           :msg "edist must have two numbers or vectors")))
+
+
+(defn dist-matrix
+  "Computes and returns the pairwise distance matrix for items in
+   COLL.  The distances between items is given by distfn.  SYM
+   indicates that distfn is symmetric (default) and keyfn returns a
+   key suitable for map entries for an item and defaults to identity.
+   The idea behind keyfn is that some items may be large or otherwise
+   complicated and thus expensive to compare but a unique key may be
+   generated for them beforehand.  A typical scenario would be to
+   'Goedel number' them.
+
+   Returns {[k v] | k=[(kefn i) (kefn j)] v =(distfn i j)}
+
+   Uses reducers and xfold to parallelize computation with auto
+   computed queue granularity (see xfold)
+  "
+   [distfn coll & {:keys [sym keyfn] :or {sym true keyfn identity}}]
+   (let [coll (vec coll)
+         cnt (count coll)]
+     (reduce (fn[M [ik jk d]]
+               (if sym
+                 (assoc M [ik jk] d [jk ik] d)
+                 (assoc M [ik jk] d)))
+             {} (xfold (fn [[i j]] [(keyfn i) (keyfn j) (distfn i j)])
+                       (for [k (range cnt)
+                             l (range cnt)
+                             :let [i (coll k)
+                                   j (coll l)]
+                             :when (if sym (< k l) (not= k l))]
+                         [i j])))))
 
 
 (defn extreme-pd
@@ -131,14 +163,18 @@
   [distfn clusters]
   (sum (partial ith-sum-sqr-err distfn) clusters))
 
+
+
+;;; ------------------------------------------------------------------------;;;
+;;;                   Loyd step and flavors of kmeans                       ;;;
+
 (defn centers
   "Compute a new set of centers from CLUSTERS using AVGFN as a 'mean'
    for the points in each cluster Ci of clusters.  Returns an 'eager'
    seq of these new centers.
   "
   [avgfn clusters]
-  (reduce (fn[S cl] (conj S (avgfn cl)))
-          [] clusters))
+  (xfold (fn[cl] (avgfn cl)) clusters))
 
 (defn clusters
   "Form and return a set of clusters.  Each cluster is the set of
@@ -148,7 +184,7 @@
   "
   [distfn coll centers]
   (reduce (fn[M [x c]] (assoc M c (conj (get M c []) x)))
-          {} (map #(do [% (nearest % distfn centers)]) coll)))
+          {} (xfold #(do [% (nearest % distfn centers)]) coll)))
 
 
 (defn split-worst-cluster
@@ -276,6 +312,140 @@
   "
   [k coll & {:keys [distfn avgfn] :or {distfn vecdist avgfn vecmean}}]
   (kmeans (km++init k distfn coll) coll :distfn distfn :avgfn avgfn))
+
+
+
+;;; ------------------------------------------------------------------------;;;
+;;;         KNN and KRNN based clustering (RECORD, CHAMELEON)               ;;;
+
+
+(defn knn
+  "Compute K nearest neighbors of point P in collection COLL.
+   Distance is given by means of distfn, preferably a metric, but can
+   be a 'similarity measure' such as relative entropy.  O(nlogn)
+   complexity.
+  "
+  [k distfn p
+  coll]
+  (take k (sort-by #(distfn p %) coll)))
+
+(defn knn-graph
+  "Compute the k nearest neighbors graph over the items in COLL as
+   determined by distance function distfn, preferably a metric, but
+   can be a 'similarity measure' such as relative entropy.  Returns
+   the graph encoded as a map (sparse edge set matrix), with keys
+   items in COLL and values k-sets of items in COLL.
+  "
+  [k distfn coll]
+  (let [coll (set coll)]
+    (reduce
+     (fn[G p] (assoc G p (knn k distfn p (set/difference coll #{p}))))
+     {} coll)))
+
+
+(defn krnn-graph
+  "Compute the k reverse nearest neighbors graph over the items in
+   COLL as determined by the k nearest neighbors graph over COLL (see
+   knn-graph).  Distance of knn graph is determined by distance
+   function distfn, preferably a metric, but can be a 'similarity
+   measure' such as relative entropy.  Returns the graph encoded as a
+   map (sparse edge set matrix), with keys items in COLL and values
+   sets of items in COLL.
+
+   NOTE: the size of the value sets for krnn need not be k, typically
+   isn't k, and can range from 0 to (count coll).
+  "
+  [k distfn coll]
+  (let [knngrph (knn-graph k distfn coll)]
+    (conj (reduce (fn[[krnnM rnncntM] p]
+                    (reduce (fn[[krnnM rnncntM] q]
+                              [(assoc krnnM q (conj (get krnnM q []) p))
+                               (assoc rnncntM q (inc (get rnncntM q 0)))])
+                            [krnnM rnncntM] (knngrph p)))
+                  [{} {}] coll)
+          knngrph)))
+
+
+(defn split-krnn
+  "Takes a krnn graph (as built by krnn-graph) for value k, with point
+   counts given by rnncntM (as built by krnn-graph) and the
+   corresponding knngrph that is the basis of the krnn graph, and
+   returns two new graphs [rnnG>k rnnG<k]:
+
+   rnnG>k is the subgraph of krnngrph whose nodes have >= k edges
+
+   rnnG<k is the subgraph of krnngrph whose nodes have < k edges
+
+   Additionally, all edge set nodes in both subgraphs that do not
+   appear as nodes in the subgraphs are removed (another choice would
+   have been to include them with null edge sets, but that would have
+   violated the constraints on rnnG>k).
+
+   These two graphs form the basis for initial sets of clusters based
+   on the set of strongly connected components (SCC) in them.  These
+   SCC form the basis of both the Chameleon and RECORD clustering
+   algorithms.
+  "
+  [k krnngrph rnncntM knngrph]
+  (let [[rnnG>k rnnG<k]
+        (reduce (fn[[rnnG>k rnnG<k] p]
+                  (if (< (rnncntM p) k)
+                    (let [rnnG>k (reduce
+                                  (fn[G q]
+                                    (if (G q)
+                                      (assoc G q (remove #(= % p) (G q)))
+                                      G)) ; If it was removed, don't put back!
+                                  rnnG>k (knngrph p))]
+                      [(dissoc rnnG>k p)
+                       (assoc rnnG<k p (rnnG>k p))])
+                    [rnnG>k rnnG<k]))
+                [krnngrph {}] (keys rnncntM))
+        ;; Make final pass on just constructed outliers removing edge
+        ;; set points in rnnG>k (well mostly - really any not in
+        ;; rnnG<k)
+        rnnG<k (let [nodes (keys rnnG<k)]
+                 (reduce (fn[rnnG<k q]
+                           (if (not (in q nodes))
+                             (reduce (fn[G n]
+                                       (assoc G n (remove #(= % q) (G n))))
+                                     rnnG<k nodes)
+                             rnnG<k))
+                         rnnG<k (-> rnnG<k vals flatten set)))]
+    [rnnG>k rnnG<k]))
+
+
+(defn refoldin-outliers
+  "Takes a krnn graph and the SCC 'clusters' corresponding to the s"
+  [krnngrph rnnG>k-sccs rnnG<k-sccs]
+  (let [clusters (first (reduce (fn[[M i] scc]
+                                  [(assoc M i scc) (inc i)])
+                                [{} 0] rnnG>k-sccs))
+        outliers (->> rnnG<k-sccs
+                      (map seq) flatten
+                      (map #(do [% (set (krnngrph %))]))
+                      (into {}))]
+    #_(prn clusters)
+    (->>
+     (reduce (fn[clus [o ons]]
+               (->> clus (map (fn[[k v]] [k (count (set/intersection v ons))]))
+                    (sort-by second >) first
+                    ((fn[[k cnt]]
+                       (if (not= 0 cnt)
+                         (assoc clus k (conj (clus k) o))
+                         (assoc clus (gen-uid) #{o}))))))
+             clusters outliers)
+     vals set)))
+
+
+(defn krnn-clust
+  ""
+  [k distfn coll & {:keys [keyfn] :or {keyfn identity}}]
+  (let [dm (dist-matrix distfn coll :keyfn keyfn)
+        kcoll (map keyfn coll)
+        [krnngrph rnncntM knngrph] (krnn-graph k #(get dm [%1 %2]) kcoll)]
+    (->> (split-krnn k krnngrph rnncntM knngrph)
+         (map #(gr/tarjan (keys %) %))
+         (apply refoldin-outliers krnngrph))))
 
 
 
@@ -445,10 +615,12 @@
   "
   [distfn avgfn clustering]
   (math/sqrt
-   (/ (sum (fn[[mi xis]]
-             (* (dec (count xis))
-                (variance xis :distfn distfn :avgfn avgfn :m mi)))
-           clustering)
+   (/ (sum
+       (xfold
+        (fn[[mi xis]]
+          (* (dec (count xis))
+             (variance xis :distfn distfn :avgfn avgfn :m mi)))
+        1 clustering))
       (- (sum count clustering) (count clustering)))))
 
 (defn density
@@ -459,7 +631,7 @@
   "
   [distfn stdev u coll]
   (let [f (fn[x mi] (if (<= (distfn x mi) stdev) 1 0))]
-    (sum #(f % u) coll)))
+    (sum (xfold #(f % u) coll))))
 
 (defn intercluster-density
   "Compute the inter cluster point density.  This is the density
@@ -506,9 +678,11 @@
    the better.
   "
   [distfn avgfn clustering]
-  (let [S (apply set/union (map #(set (second %)) clustering))
-        Svar (variance S :distfn distfn :avgfn avgfn)
-        Cvars (map (fn[[mi xis]] (variance xis :m mi)) clustering)]
+  (let [S (apply set/union (xfold #(set (second %)) clustering))
+        Svar (variance S :distfn distfn :avgfn avgfn :rfn xfold)
+        Cvars (xfold (fn[[mi xis]]
+                       (variance xis :distfn distfn :m mi))
+                     1 clustering)]
     (mean (map #(/ % Svar) Cvars))))
 
 (defn S-Dbw-index
@@ -545,7 +719,16 @@
 
 
 
-(defn find-clusters
+;;; (ns-unmap *ns* 'find-clusters)
+(defmulti
+  ^{:arglists
+    '([coll & {:keys [distfn avgfn algo vindex]
+             :or {algo kmeans++ vindex S-Dbw-index
+                  distfn edist avgfn mean}}]
+      [_ coll & {:keys [distfn avgfn algo vindex]
+                 :or {algo kmeans++ vindex S-Dbw-index
+                      distfn edist avgfn mean}}])}
+  find-clusters
   "Computes the 'best' clustering of the data in collection COLL whose
    distances are given by DISTFN and means by AVGFN, as produced by
    ALGO and measured by VINDEX.  ALGO is the clustering algorithm,
@@ -563,6 +746,10 @@
    not find the optimal (true) clusters (as it always tends to find
    'equal area' clusters.
   "
+  (fn [& args] (first args)))
+
+
+(defmethod find-clusters :default
   [coll & {:keys [distfn avgfn algo vindex]
            :or {algo kmeans++ vindex S-Dbw-index
                 distfn edist avgfn mean}}]
@@ -577,6 +764,32 @@
           (recur (inc k)
                  [score clustering]))))))
 
+
+(defmethod find-clusters :global
+  [_ coll & {:keys [distfn avgfn algo vindex]
+             :or {algo kmeans++ vindex S-Dbw-index
+                  distfn edist avgfn mean}}]
+  (let [data (set coll)]
+    (first
+     (sort-by
+      first <
+      (for [k (range 2 (int (/ (count coll) 3)))
+            :let [clustering (algo k data :distfn distfn :avgfn avgfn)
+                  score (vindex distfn clustering :avgfn avgfn)]]
+        [score clustering])))))
+
+
+(comment
+  (let [ents-seqs (->> "/home/jsa/Bio/FreqDicts/NewRFAM/RF00504-seed-NC.sto"
+                       (#(read-seqs %1 :info :names))
+                       (#(get-adjusted-seqs %1 700))
+                       (take 30)
+                       ((fn[[nm sq]] [(probs 7 sq) nm sq])) vec)
+        ??? (combins 2 (range 0 30))]
+    (clu/find-clusters :global xxx
+                       :distfn ???
+                       :avgfn ???))
+  )
 
 
 ;;; ----------------- Ad Hoc Testing Stuff -------------------------------

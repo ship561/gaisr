@@ -108,7 +108,7 @@
       [0 map-structures]) ;returns all suboptimal structures
     ))
 
-(ns-unmap 'edu.bc.utils.fold-ops 'fold2)
+;(ns-unmap 'edu.bc.utils.fold-ops 'fold2)
 (defmulti fold2 (fn [s & args]
                   ((or (first args) {}) :foldtype)))
 
