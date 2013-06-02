@@ -2,12 +2,11 @@
   (:require [clojure.string :as str]
             [clojure.contrib.io :as io]
             [edu.bc.fs :as fs])
-  (:use edu.bc.bio.sequtils.files
+  (:use [clojure.set :only (map-invert)]
+        edu.bc.bio.sequtils.files
+        edu.bc.bio.sequtils.tools
         edu.bc.bio.sequtils.snippets-files
         [edu.bc.utils :only (nCk transpose)]
-        edu.bc.bio.sequtils.snippets-files
-        [clojure.contrib.pprint
-         :only (cl-format compile-format)]
         refold
         ))
 
@@ -76,7 +75,7 @@
                    sqs dgap)
              st))))
 
-(defn randseqs
+(defn randnseqs
   "takes n seq-lines and the number of random sequences to draw from it"
 
   [seq-lines n]
@@ -97,7 +96,7 @@
 
   [insto n]
   (let [[_ seq-lines cons-lines] (join-sto-fasta-lines insto "")
-        subset (->> (repeatedly #(-> (randseqs seq-lines (+ (rand-int 4) 3))
+        subset (->> (repeatedly #(-> (randnseqs seq-lines (+ (rand-int 4) 3))
                                      degap-aln))
                     (filter #(apply distinct? %) ) ;elements of subset distinct
                     distinct) ;subsets are distinct
@@ -108,7 +107,7 @@
                   (io/with-out-writer tmp1 (toaln ss)) ;subset aln
                   (aln->sto tmp1 tmp2) ;subset sto
                   (fs/rm tmp1)
-                  (if (valid-seq-sto tmp2)
+                  (if (valid-seq-sto? tmp2)
                     tmp2               ;valid sto
                     (do (fs/rm tmp2)
                         :remove))))
@@ -179,3 +178,94 @@
       (io/with-out-writer outfile (print-sto outseqs outst))
       (print-sto outseqs outst))
     ))
+
+(defn entry-parts->entry
+  "changes a entry vector back into the string"
+
+  [entry-vector]
+  (let [[nm [s e] strand] entry-vector]
+    (str/join "/" [nm (str s "-" e) strand])))
+
+(defn get-flank
+  "Given an entry it will find the flanking 5' and 3' region of the
+  same size as the entry. Flanking regions are returned as a map with
+  the keys :5prime and :3prime. "
+
+  [entry]
+  (let [[_ [s e] strand] (entry-parts entry)
+        delta (- e s)
+        lentry (gen-name-seq entry :rdelta (- delta) :ldelta delta)
+        rentry (gen-name-seq entry :rdelta delta :ldelta (- delta))
+        flank (if (pos? (Integer/parseInt strand)) ;make strand an int
+                {:5prime lentry :3prime rentry}
+                {:5prime rentry :3prime lentry})]
+    flank))
+
+(defn trainset3-pos
+  "Takes the Rfam stos and produces stos with NC assession
+  numbers. Any seq that doesn't have a NC equivalent is left out of
+  the new sto" []
+  (map embl-to-nc (fs/directory-files "/home/peis/bin/gaisr/trainset3/pos" ".sto")))
+
+(defn trainset3-negs
+  "generate trainset negative sto's. Produces the stos in current
+  folder. Usually just copy to a new folder for negatives"
+
+  []
+  (let [fdir "/home/peis/bin/gaisr/trainset3/pos"
+        files (fs/re-directory-files fdir "-NC.sto")
+        outfn (fn [k f outfile-ext] ;outfile-ext is really the outfile
+                                   ;name part to appear
+                (let [outfile (fs/replace-type f outfile-ext)
+                      flank-entries (map get-flank (read-seqs f :info :name))]
+                  (-> (nms-sqs->fasta-file (-> (map k flank-entries);k=:5prime or :3prime
+                                               map-invert 
+                                               map-invert ;removes duplicates
+                                               vec)
+                                           (fs/replace-type outfile ".fna")) ;fasta out
+                      fasta->aln
+                      (aln->sto outfile))))] ;out sto file
+    (doseq [f files]
+      (outfn :5prime f "-5prime.sto")
+      (outfn :3prime f "-3prime.sto"))))
+
+
+(defn check-blastout-hits
+  "checks blastout hits to identify hits that are in the blastout file
+  that appear to be 'valid' hits but are not due to incorrect length. "
+
+  [stoin]
+  (let [blastout (fs/replace-type stoin ".fna.blast")
+        embl-aln-pairs (->> stoin (#(read-seqs % :info :both)) (into {}))
+        ;;compare the ncbi seq and the inseq from alignment and the
+        ;;seq lengths to ensure they are the same
+        embl-ncbi-seq-len (fn [[embl-name ncbi-hits]] 
+                            (map (fn [entry]
+                                   (let [[nm [s e] strand] (entry-parts entry)
+                                         nc-seq (second (gen-name-seq entry))
+                                         rfam-seq (-> (embl-aln-pairs embl-name)
+                                                       (str/replace #"\." "" ))]
+                                     [nm
+                                      (= (- e s -1) (count rfam-seq))
+                                      (= nc-seq rfam-seq)]))
+                                 ncbi-hits))
+        good-mappings (->> (map #(vector (first %) (embl-ncbi-seq-len %))
+                                (get-embl-blast-candidates blastout))
+                           (map (fn [[embl-name entries]]
+                                  (some #(and (-> % second true?)
+                                              (->> % last true?))
+                                        entries)))
+                           (group-by true? ))]
+    (/ (count (good-mappings false))
+       (+ (count (good-mappings true))
+          (count (good-mappings false))))
+    ))
+
+(defn check-sto-entry-seqs
+  "checks all entries in the sto to make sure the lengths are all correct."
+  
+  [stoin]
+  (every? true? (for [[entry s] (read-seqs stoin :info :both)
+                      :let [length (fn [[s e]] (- e s -1))
+                            coord (second (entry-parts entry))]]
+                  (= (length coord) (count (str/replace s #"\." ""))))))

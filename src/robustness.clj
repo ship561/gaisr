@@ -147,9 +147,10 @@
 
   The average is the neutrality"
 
-  [s cons-keys & {:keys [ncore nsubopt]
-                  :or {ncore 2 nsubopt 1000}}]
-  (let [neighbors (mutant-neighbor s)] ;1-mut neighbors
+  [s st & {:keys [ncore nsubopt]
+           :or {ncore 2 nsubopt 1000}}]
+  (let [[s st cons-keys] (degap-conskeys s st)
+        neighbors (mutant-neighbor s)] ;1-mut neighbors
     (pxmap (fn [neighbor]
              ;;a freqmap of % overlap for each neighbor
              (subopt-overlap-seq neighbor cons-keys nsubopt))
@@ -175,17 +176,14 @@
     [altname ;return [filename data]
      (doall
       ;;go over each seq in the alignment
-      (map
-       (fn [[nm s]] 
-         (let [[s st cons-keys] (degap-conskeys s cons)]
-           ;;finds 1000 suboptimal structures and
-           ;;finds the percent overlap of
-           ;;suboptimal structures to the cons struct
-           (doall (subopt-overlap-neighbors s cons-keys
-                                            :nsubopt nsubopt
-                                            :ncore (inc ncore)))))
-       ;ncore
-       l))] ;l=list of seqs in the sto
+      (map (fn [[nm s]]
+             ;;finds 1000 suboptimal structures and
+             ;;finds the percent overlap of
+             ;;suboptimal structures to the cons struct
+             (doall (subopt-overlap-neighbors s cons
+                                              :nsubopt nsubopt
+                                              :ncore (inc ncore))));ncore
+           l))] ;l=list of seqs in the sto
     ))
 
 ;;;-----------------------------------------------------------------------------
@@ -455,25 +453,20 @@
                              :parse-fn #(str/split #" " %) ;create list of files
                              :default nil]
                             ["-o" "--outfile" "file to write to" :default nil]
-                            ["-di" "--dir" "dir in which files are located" :default (str homedir "/bin/gaisr/trainset2/")]
-                            ["-p" "--pos" "check only positive training files" :default nil :flag true]
-                            ["-n" "--neg" "check only negative training files" :default nil :flag true]
+                            ["-di" "--dir" "dir in which files are located"
+                             :default (str homedir "/bin/gaisr/trainset2/pos/")]
                             ["-nc" "--ncore" "number cores to use" :parse-fn #(Integer/parseInt %) :default 6]
                             ["-d" "--debug" "debug using (take 3 (filter #(re-seq #\"RF00555-seed\" %) fsto))"
                              :default nil :flag true]
                             ["-h" "--help" "usage" :default nil :flag true])
-        fdir (str (opts :dir) 
-                  (cond
-                   (opts :pos) "pos/"
-                   (opts :neg) "neg/"
-                   ))
-        fsto (or (opts :file)
-                 (filter #(re-find #"\.sto" %) (fs/listdir fdir)))
+        fdir (opts :dir) 
+        fsto (or (map #(str fdir "/"  %) (opts :file))
+                 (fs/directory-files fdir ".sto"))
         stos (if (opts :debug)
                (take 3 (filter #(re-seq #"RF00555-seed" %) fsto))
                fsto)
         neutrality (for [sto stos] ;loop over stos
-                     (subopt-overlap-sto (str fdir sto) :ncore (opts :ncore)))]
+                     (subopt-overlap-sto sto :ncore (opts :ncore)))]
     (cond
      (or (nil? args) (opts :help)) (print usage) ;usage help
      (not (nil? (opts :outfile))) (io/with-out-writer (opts :outfile)

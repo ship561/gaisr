@@ -86,7 +86,7 @@
         misc-args   (if misc (str/split #" " misc) [])]
 
     (assert-tools-exist [blastn tblastn])
-
+    
     (case pgm
      :blastn
      (runx blastn (concat io-args ctrl-args fmt-args misc-args))
@@ -427,7 +427,7 @@
         blastout (or blastout (blast :blastn fna :strand :both :misc misc))
         embl-aln-pairs (->> stoin (#(read-seqs % :info :both)) (into {}))
         nc-aln-pairs (reduce
-                      (fn[V [id v]]
+                      (fn [V [id v]]
                         (conj V [(rand-nth v) (embl-aln-pairs id)]))
                       [] (get-embl-blast-candidates blastout))
         [sqs-gcs hdgf-lines] (sto-GC-and-seq-lines stoin)

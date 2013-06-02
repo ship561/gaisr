@@ -123,6 +123,7 @@
   ([fm] (str-date (Date.) fm))
   ([d fm] (.format (SimpleDateFormat. fm) d)))
 
+(declare runx)
 
 (defn cpu-use
   "Obtain and return cpu utilization.  Requires the 'top' command is

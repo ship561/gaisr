@@ -5,7 +5,8 @@
             [clojure.test :as test]
             [edu.bc.fs :as fs]
             )
-  (:use [edu.bc.bio.sequtils.files :only (read-seqs)])
+  (:use [clojure.tools.cli :only [cli]]
+        [edu.bc.bio.sequtils.files :only (read-seqs)])
   )
 
 (def mute-dir (str (fs/homedir) "/bin/RNAMute/"))
@@ -43,8 +44,8 @@
   []
   (let [out (-> (str mute-dir "RESULT_TABLE.html") io/read-lines second)
         parse-for (fn [re] (-> (re-find re out) second Double/parseDouble))
-        dotdist (parse-for #"Dot-Bracket Distances is: (\d+.?\d+)")
-        shapiro (parse-for #"Shapiro's Distances is: (\d+.?\d+)")]
+        dotdist (parse-for #"Dot-Bracket Distances is: (\-?\d*\.?\d+)")
+        shapiro (parse-for #"Shapiro's Distances is: (\-?\d*\.?\d+)")]
     [dotdist shapiro]))
 
 (defn RNAmute-dist
@@ -66,13 +67,11 @@
   (let [[opts _ usage] (cli args
                             ["-o" "--outfile" "file to write to"
                              :default (str (fs/homedir) "/bin/gaisr/robustness/rnamute-data.clj")]
-                            ["-p" "--pos" "check only positive training files" :default nil :flag true]
-                            ["-n" "--neg" "check only negative training files" :default nil :flag true]
+                            ["-di" "--dir" "dir in which files are located"
+                             :default (str (fs/homedir) "/bin/gaisr/trainset2/")]
                             )
-        fdir (str (fs/homedir) "/bin/gaisr/trainset2/" (cond
-                                                        (opts :pos) "pos/"
-                                                        (opts :neg) "neg/"))
-        files (take 2 (fs/re-directory-files fdir #"\.\d\.sto$"))
+        fdir (opts :dir)
+        files (fs/re-directory-files fdir #"\.\d\.sto$")
         results (->> (map #(do (prn %)
                                (RNAmute-dist %)) files)
                      (apply concat)
