@@ -130,9 +130,10 @@
 
   The average is the neutrality"
 
-  [s cons-keys & {:keys [ncore nsubopt]
-                  :or {ncore 2 nsubopt 1000}}]
-  (let [neighbors (mutant-neighbor s)] ;1-mut neighbors
+  [s st & {:keys [ncore nsubopt]
+           :or {ncore 2 nsubopt 1000}}]
+  (let [[s st cons-keys] (degap-conskeys s st)
+        neighbors (mutant-neighbor s)] ;1-mut neighbors
     (pxmap (fn [neighbor]
              ;;a freqmap of % overlap for each neighbor
              (subopt-overlap-seq neighbor cons-keys nsubopt))
@@ -158,17 +159,14 @@
     [altname ;return [filename data]
      (doall
       ;;go over each seq in the alignment
-      (map
-       (fn [[nm s]] 
-         (let [[s st cons-keys] (degap-conskeys s cons)]
-           ;;finds 1000 suboptimal structures and
-           ;;finds the percent overlap of
-           ;;suboptimal structures to the cons struct
-           (doall (subopt-overlap-neighbors s cons-keys
-                                            :nsubopt nsubopt
-                                            :ncore (inc ncore)))))
-       ;ncore
-       l))] ;l=list of seqs in the sto
+      (map (fn [[nm s]]
+             ;;finds 1000 suboptimal structures and
+             ;;finds the percent overlap of
+             ;;suboptimal structures to the cons struct
+             (doall (subopt-overlap-neighbors s cons
+                                              :nsubopt nsubopt
+                                              :ncore (inc ncore))));ncore
+           l))] ;l=list of seqs in the sto
     ))
 
 ;;;-----------------------------------------------------------------------------
@@ -248,10 +246,9 @@
    <1-d/L>."
   
   [s st n]
-  (let [[s st cons-keys] (degap-conskeys s st)]
-    (->> (subopt-overlap-neighbors s cons-keys :nsubopt n)
-        (map mean ) ;subopt-overlap
-        mean))) ;neutrality
+  (->> (subopt-overlap-neighbors s st :nsubopt n)
+       (map mean ) ;subopt-overlap
+       mean)) ;neutrality
 
 (defn subopt-robustness
   "Takes an input sto and estimates the significance of the robustness
@@ -274,7 +271,7 @@
             (let [[s st cons-keys] (degap-conskeys s cons)
                   inv-seq (create-inv-seqs nm s st n inv-sto) ;vector of n inverse-folded seqs
                   neut (map (fn [x]
-                              (subopt-overlap-neighbors x cons-keys :ncore ncore :nsubopt nsubopt))
+                              (subopt-overlap-neighbors x st :ncore ncore :nsubopt nsubopt))
                             (concat (list s) inv-seq))]
               ;;average %overlap for each wt and inv-fold seq
               (map (fn [x]
@@ -888,9 +885,8 @@
                                                 (partition-all 2))
                                            ))))
                   inv-seq (inv-fold st 100)
-                  cons-keys (set (keys (struct->matrix st)))
                   neut (map (fn [x]
-                              (subopt-overlap-neighbors x cons-keys :nsubopt 1000))
+                              (subopt-overlap-neighbors x st :nsubopt 1000))
                             (concat (list s) inv-seq))]
               (map (fn [x] (->> x (apply merge-with +) mean double)) neut)))
           2

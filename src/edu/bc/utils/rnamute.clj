@@ -5,7 +5,8 @@
             [clojure.test :as test]
             [edu.bc.fs :as fs]
             )
-  (:use [edu.bc.bio.sequtils.files :only (read-seqs)])
+  (:use [clojure.tools.cli :only [cli]]
+        [edu.bc.bio.sequtils.files :only (read-seqs)])
   )
 
 (def mute-dir (str (fs/homedir) "/bin/RNAMute/"))
@@ -23,7 +24,10 @@
   files in the RNAmute directory"
 
   [insto]
-  (map #(-> (str/replace % #"\." "") seq->file) (read-seqs insto)))
+  (->> (map #(when (nil? (re-find #"[^ACGTUacgtu\.]" %))
+               (-> (str/replace % #"\." "") seq->file))
+            (read-seqs insto))
+       (remove nil? )))
 
 (defn run-rnamute
   "Shell call to RNAmute"
@@ -50,22 +54,32 @@
   shapiro-notation-distance]"
 
   [insto]
-  (let [norm-dist (fn [d L] (- 1 (/ d L)))]
+  (let [norm-dist (fn [d L] (- 1 (/ d L)))] ;1-d/L
     (for [s (sto->seqs insto)
           :let [len (-> (io/read-lines s)
                         first
                         count)]]
+      ;;first parses the RNAmute output then normalizes it in the mapfn
       (mapv #(norm-dist % len)
            (do (run-rnamute s)
                (parse-output))))))
 
 (defn -main [& args]
-  (let [files (take 2 (fs/re-directory-files (str (fs/homedir) "/bin/gaisr/trainset2/pos/") #"\.\d\.sto$"))
+  (let [[opts _ usage] (cli args
+                            ["-o" "--outfile" "file to write to"
+                             :default (str (fs/homedir) "/bin/gaisr/robustness/rnamute-data.clj")]
+                            ["-p" "--pos" "check only positive training files" :default nil :flag true]
+                            ["-n" "--neg" "check only negative training files" :default nil :flag true]
+                            )
+        fdir (str (fs/homedir) "/bin/gaisr/trainset2/" (cond
+                                                        (opts :pos) "pos/"
+                                                        (opts :neg) "neg/"))
+        files (take 2 (fs/re-directory-files fdir #"\.\d\.sto$"))
         results (->> (map #(do (prn %)
                                (RNAmute-dist %)) files)
                      (apply concat)
                      vec)]
-    (io/with-out-writer (str (fs/homedir) "/bin/gaisr/robustness/rnamute-data.clj")
+    (io/with-out-writer (opts :outfile)
       (println ";;;data for rnamute program running it on all seqs in trainset2/pos with re=\".\\d.sto$\". returns a vector of vectors of the average distance already normalized using <1-d/L>. Vector format is [dotbracket-dist shapiro-dist].")
       (prn results))))
 
@@ -73,5 +87,5 @@
   
   (test/is (= (RNAmute-dist (str (fs/homedir) "/bin/gaisr/trainset2/pos/RF00167-seed.3.sto"))
               '([0.827186274509804 0.7580490196078431] [0.8586 0.72377] [0.9147339999999999 0.84964])))
-  #_(test/is (= (map RNAmute-dist (take 3 (fs/re-directory-files (str (fs/homedir) "/bin/gaisr/trainset2/pos/") #"RF00167.*\.\d\.sto")))
+  (test/is (= (map RNAmute-dist (take 3 (fs/re-directory-files (str (fs/homedir) "/bin/gaisr/trainset2/pos/") #"RF00167.*\.\d\.sto")))
             '(([0.9276 0.88634] [0.8288529411764706 0.7038333333333333] [0.9322058823529412 0.8767549019607843] [0.8879313725490197 0.8069411764705883] [0.7681078431372549 0.6504313725490196] [0.85107 0.78687]) ([0.8617254901960785 0.7863725490196078] [0.8586 0.72377] [0.956067 0.9394] [0.879343137254902 0.8015196078431372] [0.6476530612244897 0.4582142857142857] [0.71634 0.64517]) ([0.9370117647058823 0.9017058823529411] [0.956067 0.9394] [0.8508921568627451 0.7728137254901961] [0.9096 0.8439] [0.9328470588235294 0.9161225490196079] [0.8569166666666667 0.7571979166666667])))))
