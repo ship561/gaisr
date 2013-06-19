@@ -242,10 +242,11 @@
             :seq (rdat "SEQUENCE")
             :structure (rdat "STRUCTURE")))))
 
-(def parse-sto-function
-    "parse out the function and designation of an RNA from the sto
-    file. Typically only used in to parse the Rfam seed alignment file. "
+(def ^{:doc "parse out the function and designation of an RNA from the
+    sto file. Typically only used in to parse the Rfam seed alignment
+    file. "}
 
+  parse-sto-function
     (reduce (fn [m sto]
               (let [gc-lines (first (join-sto-fasta-lines sto ""))
                     get-comment (fn [re] (->> gc-lines

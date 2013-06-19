@@ -13,7 +13,7 @@
 
 (def ^{:private true} homedir (fs/homedir))
 
-(def ^{:private true} todo-files
+#_(def ^{:private true} todo-files
   (filter #(re-find #"\.7\.sto" %) (fs/listdir fdir))) ;subset of data
 
 (def ^{:private true} done-files
@@ -148,7 +148,7 @@
   [& args]
   (let [parse (fn [s] (-> (str/split #" " s) vec))
         [opts _ usage] (cli args
-                            ["-t" "--todo" "files todo" :parse-fn parse :default todo-files]
+                            ["-t" "--todo" "files todo" :parse-fn parse]
                             ["-n" "--nseqs" "number of inverse seqs to create"
                              :parse-fn #(Integer/parseInt %) :default 100]
                             ["-nc" "--ncpu" "number of cpus to use"

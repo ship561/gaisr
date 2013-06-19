@@ -90,7 +90,7 @@
   (doseq [[nm sq] seq-lines]
     (cl-format true "~A~40T~A~%" nm sq)))
 
-;(ns-unmap 'edu.bc.bio.sequtils.snippets-files 'fasta->aln)
+;;;(ns-unmap 'edu.bc.bio.sequtils.snippets-files 'fasta->aln)
 (defmulti
 
   ^{:doc "align a fasta file using either :clustalw
@@ -161,7 +161,7 @@
      (cl-format true "~A~40T~A~%" "#=GC SS_cons" structure)
      (println "//")))
 
-(ns-unmap 'edu.bc.bio.sequtils.snippets-files 'aln->sto)
+;;;(ns-unmap 'edu.bc.bio.sequtils.snippets-files 'aln->sto)
 (defmulti aln->sto (fn [in-aln out-sto & args]
                      (let [args (first args)]
                        [(type (args :st)) (args :foldmethod)])))
