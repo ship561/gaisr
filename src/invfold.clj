@@ -13,8 +13,6 @@
 
 (def ^{:private true} homedir (fs/homedir))
 
-(def ^{:private true} fdir (str homedir "/bin/gaisr/trainset2/pos/"))
-
 (def ^{:private true} todo-files
   (filter #(re-find #"\.7\.sto" %) (fs/listdir fdir))) ;subset of data
 
@@ -49,7 +47,7 @@
 
 (defn enough-inv-seq?
   [f n]
-  (let [invfile (str (str/butlast 3 f) "inv.clj")]
+  (let [invfile (fs/replace-type f ".inv.clj")]
     (if (fs/exists? invfile)
       (let [invseqs (->> (read-clj invfile) (into {}))
             totalinvseqs (map count (vals invseqs))
@@ -58,27 +56,34 @@
              (every? #(>= % n) totalinvseqs))) ;correct #invfolds
       false)))
 
+(defn filter-similar-seq
+  "Takes a wtseq and inverse folded coll of sequences. Only keeps the
+  ones that are similar to (below) a threshold thr. The similarity is
+  determined using JSD."
+
+  [wtseq invcoll thr]
+  (let [wtdist (probs 1 wtseq)]
+    (filter (fn [invseq]
+              (<  (jensen-shannon wtdist
+                                  (probs 1 invseq))
+                  thr))
+            invcoll)))
+
 (defn create-inv-seqs
-  "Generates inverse folded seqs using inverse-fold. If an outfile
-   exists, then it will read it in and then add to the existing list
-   of seqs. Takes a sequence name(nm), structure (st), n inverse seqs
-   to make, and outfile. Returns the list of sequences."
+  "Generates inverse folded seqs using RNAinverse. If an outfile of
+   inverse folded seqs exists, then it will read it in and then add to
+   the existing list of seqs. Takes a sequence name(nm),
+   structure (st), n inverse seqs to make, and outfile. Returns the
+   list of sequences."
 
   [nm s st n outfile]
   (let [cur-seqs (if (fs/exists? outfile)
                    (read-clj outfile)
                    {nm []})
         cur-n (count (cur-seqs nm))
-        similar-seq (fn [wtseq invcoll thr]
-                      (filter (fn [invseq]
-                                (<  (jensen-shannon (probs 1 wtseq) ;wtdist
-                                                    (probs 1 invseq))
-                                    thr))
-                              invcoll))
-        inv-seqs (->> (map #(similar-seq s % 0.01)
-                           (repeatedly #(inverse-fold st n :perfect? false)))
-                      (lazy-cat (cur-seqs nm))
-                      )
+        inv-seqs (->> (repeatedly #(inverse-fold st n :perfect? false))
+                      (map #(filter-similar-seq s % 0.01) )
+                      (lazy-cat (cur-seqs nm) ))
         ]
     (when (< cur-n n) 
       (let [out (doall (->> inv-seqs
@@ -86,7 +91,7 @@
                             distinct
                             (take n)))]
         (io/with-out-writer outfile
-            (prn (assoc cur-seqs nm (vec out))))))
+          (prn (assoc cur-seqs nm (vec out))))))
     (take n inv-seqs)))
 
 (defn create-inv-sto
@@ -97,9 +102,9 @@
    [sto-name status] at to indicate success."
 
   [insto n timeout-ms]
-  (let [outfile (str (str/butlast 3 insto) "inv.clj")
-        {inseqs :seqs cons :cons} (read-sto insto :with-names true)
-        cons (change-parens (first cons))
+  (let [outfile (fs/replace-type insto ".inv.clj")
+        {inseqs :seqs cons :cons} (read-sto insto :info :both)
+        cons (-> cons first change-parens)
         f (fn []
             (doall
              (for [[nm s] inseqs]
@@ -116,19 +121,19 @@
   "drives the create-inv-sto function by feeding it all the stos of
    interest - mainly the *.7.sto. creates nseqs inverse sequences."
   
-  ([todo-files done-files nseqs timeout & {:keys [units ncore]
-                                           :or {units :s ncore 1}}]
+  ([todo-files nseqs timeout & {:keys [units ncore]
+                                :or {units :s ncore 1}}]
      (let [;;also filter stos that need to be done because they lack
            ;;the correct number of inverse-seqs
-           diff (remaining-files #(enough-inv-seq? (str fdir %) nseqs) todo-files done-files)
+           diff (remaining-files #(enough-inv-seq? % nseqs) todo-files [])
            timeout-ms (case units
                         :ms timeout
                         :s (* timeout 1000)
                         :min (* timeout 1000 60)
                         :hr (* timeout 1000 60 60))]
        (pxmap (fn [insto]
-                (prn "working on file" insto)
-                (create-inv-sto (str fdir insto) nseqs timeout-ms))
+                (prn "working on file" (fs/basename insto))
+                (create-inv-sto insto nseqs timeout-ms))
               ncore
               diff))))
 
@@ -144,21 +149,23 @@
   (let [parse (fn [s] (-> (str/split #" " s) vec))
         [opts _ usage] (cli args
                             ["-t" "--todo" "files todo" :parse-fn parse :default todo-files]
-                            ["-d" "--done" "files done" :parse-fn parse :default done-files]
                             ["-n" "--nseqs" "number of inverse seqs to create"
                              :parse-fn #(Integer/parseInt %) :default 100]
                             ["-nc" "--ncpu" "number of cpus to use"
                              :parse-fn #(Integer/parseInt %) :default 10]
                             ["-to" "--timeout" "timeout in hours"
                              :parse-fn #(Double/parseDouble %) :default 10]
-                            ["-h" "--help" "usage" :default nil :flag true])
+                            ["-h" "--help" "usage" :default nil :flag true]
+                            ["-di" "--dir" "dir in which files are located"
+                             :default (str (fs/homedir) "/bin/gaisr/trainset2/")])
         {todo :todo done :done nseqs :nseqs} opts]
     (cond
      (opts :help)
      (print usage)
 
      args
-     (doall (driver-create-inv todo done nseqs (opts :timeout)
+     (doall (driver-create-inv (map #(fs/join (opts :dir) %) todo)
+                               nseqs (opts :timeout)
                                :units :hr
                                :ncore (/ (opts :ncpu) 2)))
 

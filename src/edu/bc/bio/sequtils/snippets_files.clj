@@ -2,12 +2,14 @@
   (:require [clojure.contrib.io :as io]
             [clojure.contrib.string :as str]
             [clojure.java.shell :as shell]
+            [clojure.set :as set]
             [edu.bc.fs :as fs])
   (:use [clojure.contrib.pprint :only (cl-format)]
         edu.bc.utils.fold-ops
         edu.bc.bio.sequtils.files
         [edu.bc.utils.probs-stats :only (probs)]
-        [refold :only (remove-gaps)]))
+        [refold :only (remove-gaps)]
+        [slingshot.slingshot :only [throw+]]))
 
 (defn change-parens
   "Change the stucture line to use (, ), and  isntead of <,>,-,and :"
@@ -21,25 +23,38 @@
 (defn read-sto
   "read stockholm file creates a map where the key=name val=sequence"
   
-  [f & {:keys [with-names only-names] 
-        :or {with-names false
-             only-names false}}]
+  [f & {:keys [info] 
+        :or {info :data}}]
   (let [[gc-lines seq-lines cons-lines] (join-sto-fasta-lines f "")
         cov (first (map #(last (str/split #"\s+" %))
-                (filter #(.startsWith % "#=GC cov_SS_cons") gc-lines)))
+                        (filter #(.startsWith % "#=GC cov_SS_cons") gc-lines)))
         cl (map #(last (second %))
                 (filter #(.startsWith (first %) "#=GC SS_cons") cons-lines))
         sl (reduce (fn [v [nm [_ sq]]]
                      (let [sq (str/replace-re #"T" "U" (.toUpperCase sq))]
-                       (cond
-                        with-names (conj v [nm sq])
-                        only-names (conj v nm)
-                        :else
-                        (conj v sq))))
-                [] seq-lines)]
-    (assoc {} :seqs sl :cons cl :file f :cov cov)))
+                       (case info
+                         :both (conj v [nm sq])
+                         :name (conj v nm)
+                         :data (conj v sq))))
+                   [] seq-lines)]
+    {:seqs sl :cons cl :file f :cov cov}))
 
-(defn valid-seq-struct
+(defn read-aln
+  "read clustalW file and makes it unblocked"
+
+  [aln & {:keys [info]
+          :or {info :data}}]
+  (let [seq-lines (second (join-sto-fasta-lines aln ""))
+        sl (reduce (fn [v [nm [_ sq]]]
+                     (let [sq (str/replace-re #"T" "U" (.toUpperCase sq))]
+                       (case info
+                        :both (conj v [nm sq])
+                        :name (conj v nm)
+                        :data (conj v sq))))
+                   [] seq-lines)]
+    (-> sl rest butlast vec)))
+
+(defn- valid-seq-struct
   "Checks the sqs (list of sequences) to make sure that all sequences
    can form part of the consensus structure. This is useful when
    ensuring that the shuffled stos will form valid
@@ -54,7 +69,7 @@
                            (valid? st)))
                        sqs))))
 
-(defn valid-seq-sto
+(defn valid-seq-sto?
   "Checks the sto to make sure that all sequences in the file can form
    part of the consensus structure. This is useful when ensuring that
    the shuffled stos will form valid structures. Occassionally,
@@ -63,11 +78,11 @@
    fold into part of the cons structure."
   
   [sto]
-  (let [{sqs :seqs cons :cons} (read-sto sto :with-names true)
+  (let [{sqs :seqs cons :cons} (read-sto sto :info :both)
         cons (change-parens (first cons))]
     (valid-seq-struct sqs cons)))
 
-(defn toaln
+(defn print-aln
   "prints out the seq-lines in clustalW format"
   
   [seq-lines]
@@ -75,45 +90,129 @@
   (doseq [[nm sq] seq-lines]
     (cl-format true "~A~40T~A~%" nm sq)))
 
-(defn print-sto
+;(ns-unmap 'edu.bc.bio.sequtils.snippets-files 'fasta->aln)
+(defmulti
+
+  ^{:doc "align a fasta file using either :clustalw
+  or :centroid_align. Produces a file aln-out. If no outfile name is
+  specified then the current file name is used with the extension
+  changed to '.aln'.
+
+  TODO: should add muscle as an aligner."
+    :arglists '([alignprogram fasta-in] [alignprogram fasta-in aln-out])}
+
+  fasta->aln (fn [& args]
+               (first args)))
+
+(defmethod fasta->aln :clustalw [_ fasta-in aln-out]
+  (let [call (shell/sh "clustalw"
+                       (str "-infile=" fasta-in)
+                       (str "-outfile=" aln-out)
+                       "-quiet")]
+    (if-not (empty? (call :err))
+      (throw+ {:error (call :err)})
+      aln-out)))
+
+(defmethod fasta->aln :centroid_align [_ fasta-in aln-out]
+  (let [call (shell/sh "centroid_align"
+                       "-f" "clustalw"
+                       fasta-in)]
+    (if-not (empty? (call :err))
+      (throw+ {:error (call :err)})
+      (io/with-out-writer aln-out (-> call :out print)))
+    aln-out))
+
+(defmethod fasta->aln :default [alignprogram fasta-in]
+  (fasta->aln alignprogram fasta-in (fs/replace-type fasta-in ".aln")))
+
+(comment
+  (defn fasta->aln
+   "aligns sequences in a fasta file using clustalW. Alignment
+  automatically printed by clustalW to same folder location containing
+  .aln extension.
+
+  TODO: add multimethod for using muscle and centroid_align"
+
+   ([fasta-in]
+      (fasta->aln fasta-in (fs/replace-type fasta-in ".aln")))
+  
+   ([fasta-in aln-out]
+      (let [call (shell/sh "clustalw"
+                           (str "-infile=" fasta-in)
+                           (str "-outfile=" aln-out)
+                           "-quiet")]
+        (if-not (empty? (call :err))
+          (throw+ {:error (call :err)})
+          aln-out)))))
+
+(defn- print-sto
   "takes sequence lines and a structure line and writes it into a sto
   format file. the seq-lines needs to be a collection of [name
   sequence] pairs. structure is a string. Simply prints out to the
   repl."
 
-  [seq-lines structure]
-  (println "# STOCKHOLM 1.0\n")
-  (doseq [sq seq-lines]
-    (let [[nm sq] (if (vector? sq)
-                    sq
-                    (str/split #"\s+" sq))]
-      (cl-format true "~A~40T~A~%" nm (str/replace-re #"\-" "." sq))))
-  (cl-format true "~A~40T~A~%" "#=GC SS_cons" structure)
-  (println "//"))
+  ([seq-lines structure]
+     (println "# STOCKHOLM 1.0\n")
+     (doseq [sq seq-lines]
+       (let [[nm sq] (if (vector? sq)
+                       sq
+                       (str/split #"\s+" sq))]
+         (cl-format true "~A~40T~A~%" nm (str/replace-re #"\-" "." sq))))
+     (cl-format true "~A~40T~A~%" "#=GC SS_cons" structure)
+     (println "//")))
 
-(defn aln->sto
-  "takes an alignment in Clustal W format and produces a sto file by
+(ns-unmap 'edu.bc.bio.sequtils.snippets-files 'aln->sto)
+(defmulti aln->sto (fn [in-aln out-sto & args]
+                     (let [args (first args)]
+                       [(type (args :st)) (args :foldmethod)])))
+
+(defmethod aln->sto [String ::RNAalifold] [in-aln out-sto args]
+  (let [sq (read-aln in-aln :info :both)]
+    (io/with-out-writer out-sto
+      (print-sto sq (args :st)))
+    out-sto))
+
+(defmethod aln->sto [nil ::RNAalifold] [in-aln out-sto args]
+  (let [st (fold-aln in-aln)
+        sq (read-aln in-aln :info :both)]
+    (io/with-out-writer out-sto
+      (print-sto sq st))
+    out-sto))
+
+(defmethod aln->sto [nil ::centroid_alifold] [in-aln out-sto args]
+  (let [st (fold-aln in-aln {:foldmethod ::centroid_alifold})
+        sq (read-aln in-aln :info :both)]
+    (io/with-out-writer out-sto
+      (print-sto sq st))
+    out-sto))
+
+(defmethod aln->sto :default [in-aln out-sto]
+  (aln->sto in-aln out-sto {:foldmethod ::RNAalifold}))
+
+(comment 
+ (defn aln->sto
+   "takes an alignment in Clustal W format and produces a sto file by
    using RNAalifold to determine the structure and then making it into
    a sto file adding header and a consensus line"
 
-  [in-aln out-sto & {:keys [fold-alg st]
-                     :or {fold-alg "RNAalifold"}}]
-  (cond
-   (identity st) ;structure provided
-   (let [sq (read-seqs in-aln :type "aln")]
-     (io/with-out-writer out-sto
-       (print-sto sq st))
-     out-sto)
+   [in-aln out-sto & {:keys [fold-alg st]
+                      :or {fold-alg "RNAalifold"}}]
+   (cond
+    (identity st)                       ;structure provided
+    (let [sq (read-aln in-aln :info :both)]
+      (io/with-out-writer out-sto
+        (print-sto sq st))
+      out-sto)
 
-   (= fold-alg "RNAalifold") ;structure from RNAalifold
-   (let [st (fold-aln in-aln)
-         sq (read-seqs in-aln :type "aln")]
-     (io/with-out-writer out-sto
-       (print-sto sq st))
-     out-sto) ;return out sto filename
+    (= fold-alg "RNAalifold")           ;structure from RNAalifold
+    (let [st (fold-aln in-aln)
+          sq (read-aln in-aln :info :both)]
+      (io/with-out-writer out-sto
+        (print-sto sq st))
+      out-sto)                          ;return out sto filename
 
-   ;;else use cmfinder
-   #_(shell/sh "perl" "/home/kitia/bin/gaisr/src/mod_cmfinder.pl" in-aln out-sto)))
+    ;;else use cmfinder
+    #_(shell/sh "perl" "/home/kitia/bin/gaisr/src/mod_cmfinder.pl" in-aln out-sto))))
 
 (defn sto->randsto
   "takes a sto input file and generates a random sto to specified
