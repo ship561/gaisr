@@ -334,6 +334,9 @@
                            :sd (sd neut)})))
           {} x))
 
+(defn combine-neighbors [list-maps]
+  (mean (apply merge-with + list-maps)))
+
 (defn avg-overlap
   "Takes a map of percent overlaps where it is organized in [k v]
    pairs. k=file name and v=list of lists of frequency maps of percent
@@ -1118,26 +1121,20 @@
                                        ["-D" "--distfn" "distance function to use" :default bpsomething]
                                        ["-o" "--outfile" "file to write to" :default nil]
                                        ["-di" "--dir" "dir in which files are located" :default (str homedir "/bin/gaisr/trainset2/")]
-                                       ["-p" "--pos" "check only positive training files" :default nil :flag true]
-                                       ["-n" "--neg" "check only negative training files" :default nil :flag true]
                                        ["-nc" "--ncore" "number cores to use" :parse-fn #(Integer/parseInt %) :default 6]
                                        ["-d" "--debug" "debug using (take 3 (filter #(re-seq #\"RF00555-seed\" %) fsto))"
                                         :default nil :flag true]
                                        ["-h" "--help" "usage" :default nil :flag true])
-                   fdir (str (opts :dir) 
-                             (cond
-                              (opts :pos) "pos/"
-                              (opts :neg) "neg/"
-                              ))
-                   fsto (or (opts :file)
-                            (fs/directory-files fdir "sto"))
+                   fdir (opts :dir) 
+                   fsto (or (map #(str fdir "/"  %) (opts :file))
+                            (fs/directory-files fdir ".sto"))
                    stos (if (opts :debug)
                           (take 3 (filter #(re-seq #"RF00555-seed" %) fsto))
                           fsto)
                    neutrality (pxmap (fn [sto] ;loop over stos
                                        (prn :workingon (fs/basename sto))
                                        (fun-sto sto (opts :distfn)))
-                                     20
+                                     10
                                      stos)]
                (cond
                 (or (nil? args) (opts :help)) (print usage) ;usage help
@@ -1146,10 +1143,25 @@
                 :else
                 (doall neutrality))))
       ]
-  (main "-p" "-d" "-D" #(bpsomething %1 %2 :bp true)))
+  (main "-f" (->> (fs/directory-files "/home/peis/bin/gaisr/trainset3/pos" "-NC.sto")
+                  (map fs/basename)
+                  (str/join " " ))
+        "--dir" "/home/peis/bin/gaisr/trainset3/pos/"
+        "-D" #(bpsomething %1 %2 :bp true))
+
+  #_(main "-f" (->> (fs/directory-files "/home/peis/bin/gaisr/trainset3/neg/3prime/" ".sto")
+                    (filter valid-seq-struct )
+                    (map fs/basename)
+                    (str/join " " ))
+          "--dir" "/home/peis/bin/gaisr/trainset3/neg/3prime/"
+          "-D" #(pccsomething %1 %2)))
 
 
-
+(io/with-out-writer "/home/peis/bin/gaisr/robustness/compare-bpdist12.clj"
+              (println ";;;compares the WT structure to the centroid structure of the 1-mut neighbors. turns the structures into a vector of 0's and 1's where 0 is unpaired 1 is paired. Uses the pearsons correlation coefficient to find the similarity between the 2 structures. the equation 1-0.5*(1-pcc) is used to normalize the data to [0 1]. uses pccsomething over the 5' NEGative training set.")
+              (prn (mapv #(vector (fs/basename (first %))
+                                  (vec (second %)))
+                         @bar)))
 )
 
 

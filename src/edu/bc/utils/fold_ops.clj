@@ -7,7 +7,7 @@
 
 (def param-file (let [viennadir (if (fs/directory? "/usr/local/ViennaRNA/")
                                   "/usr/local/ViennaRNA/" 
-                                  (str (fs/homedir) "/bin/ViennaRNA"))
+                                  (str (fs/homedir) "/bin/ViennaRNA/"))
                       pfile (str viennadir "rna_andronescu2007.par")
                       pfile (if (fs/exists? pfile)
                               pfile
