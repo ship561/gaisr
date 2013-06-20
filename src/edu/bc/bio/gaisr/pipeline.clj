@@ -49,6 +49,8 @@
         edu.bc.bio.seq-utils
         edu.bc.bio.sequtils.files
         edu.bc.bio.sequtils.tools
+        [edu.bc.bio.sequtils.dists
+         :only [compute-candidate-sets hit-context-delta]]
 
         [edu.bc.bio.job-config :only [parse-config-file]]
 
@@ -361,12 +363,7 @@
 
 (defn get-generic-sto-locs [stofile-lazyseq]
   (reduce (fn[m s-loc]
-            (let [[nm loc] (str/split #"/" s-loc)
-                  [nm v] (str/split #"\." nm)
-                  [s e] (map #(Integer. %) (str/split #"-" loc))
-                  x s
-                  s (if (< s e) s e)
-                  e (if (= s e) x e)]
+            (let [[nm [s e] strand] (entry-parts s-loc)]
               (assoc m nm (conj (get m nm []) [s e]))))
           {} (map #(first (str/split #"\s+" %))
                   (filter #(re-find #"^N(C|S|Z)" %) stofile-lazyseq))))
@@ -402,9 +399,8 @@
         file-fmt (cond
                   (re-find #"CMfinder" fmt-line) :cmfinder
                   (re-find #"Infernal" fmt-line) :infernal
-                  (re-find #"ORIGINAL_MOTIF" fmt-line) :generic
-                  :else (raise :type :unknown-sto-fmt
-                               :args [stofile fmt-line]))
+                  :else :generic ; we hope ...
+                  )
         rem-file (drop-until #(not (.startsWith % "#")) stofile-lazyseq)]
     (case file-fmt
           :cmfinder (get-cmfinder-sto-locs rem-file)
@@ -432,11 +428,13 @@
 (defn ent-loc [ent-line]
   (if (= (str/take 3 ent-line) ">gi")
     (let [l (first (re-find #":(.|)[0-9]+-[0-9]+" ent-line))]
-      (when l (subs l (first (pos-any "0123456789" l)))))
+      (if l
+        (subs l (first (pos-any "0123456789" l)))
+        (str "1-" Long/MAX_VALUE)))
     (->> ent-line
          entry-parts
          ((fn[[nm [s e] sd]]
-            (let [[s e] (if (= sd "-1") [e s] [s e])]
+            (let [[s e] (if (= sd "-1") [e s] [s e])] ; BOGUS ***HACK!!
               (str s "-" e)))))))
 
 (defmulti
@@ -501,7 +499,7 @@
 (defn build-hitseq-map [hitfile]
   (reduce (fn[m [gi sq]]
             (let [nc (ent-name gi)
-                  k (if nc (str nc ":" (ent-loc gi)) gi)]
+                  k (if nc (str nc ":" (ent-loc gi)) (subs gi 1))]
               (assoc m k sq)))
           {} (partition 2 (io/read-lines (io/file-str hitfile)))))
 
@@ -581,8 +579,8 @@
   (let [[nm loc] (str/split #":" h)
         orig-seq (hit-seq-map h)
         [s e] (if loc (vec (str/split #"-" loc)) ["1" (str (count orig-seq))])
-        s (Integer. s)
-        e (Integer. e)
+        s (Long. s)
+        e (min (Long. e) (count orig-seq))
         info (reduce
               (fn[cur nxt] ; Keep the one with best Evalue
                 (if (< (Float. (nth nxt 4)) (Float. (nth cur 4)))
@@ -609,6 +607,9 @@
                              locs)))
          :good :bad)))
    hit-parts))
+
+
+#_(def dbg-dups (atom nil))
 
 (defn remove-dups
   "Hits are relative in cmsearch out (sto file).  The original hit
@@ -639,6 +640,7 @@
    remains.
   "
   [hit-parts spread stofile]
+  #_(swap! dbg-dups (fn[_] hit-parts))
 
   (let [sto-map (reduce (fn[M e]
                           (let [[nm coord] (->> e entry-parts (take 2))]
@@ -646,11 +648,13 @@
                         {} (read-seqs stofile :info :name))
         in-spread? (fn [x y] (<= (abs (- x y)) spread))
         dup? (fn[m [nm abst abend :as k]]
-               (let [[s e :as coord] (m k)
-                     [stost stoend :as sto-coord] (sto-map nm)]
-                 (or (and coord
-                          (in-spread? s abst)
-                          (in-spread? e abend))
+               (let [[stost stoend :as sto-coord] (sto-map nm)]
+                 (or (reduce (fn[tf [s e]]
+                               (if tf
+                                 tf
+                                 (and (in-spread? s abst)
+                                      (in-spread? e abend))))
+                             false (m nm))
                      (and sto-coord
                           (let [[abst abend]
                                 (if (< abend abst) [abend abst] [abst abend])]
@@ -663,7 +667,7 @@
                      k [nm abst abend]]
                  (if (dup? m k)
                    [m s]
-                   [(assoc m k [abst abend]) (conj s v)])))
+                   [(assoc m nm (conj (m nm []) [abst abend])) (conj s v)])))
              [{} []] hit-parts))))
 
 
@@ -700,7 +704,34 @@
       (cmsearch-out-csv x :spread spread))))
 
 
-
+(defn aggregate-csvs
+  "Aggregate the cmsearch.csv output files in director
+   DIR. Aggregation works on a per sto basis: if dir has the results
+   of n-stos in it, there will be n-aggregated csvs.  Aggregation
+   drops all empty csvs and takes all non empty csvs per sto, and
+   combines those results into one `sto-name`.aggregate.cmsearch.csv.
+  "
+  [dir]
+  (let [nonempty (->> dir (#(fs/directory-files % "cmsearch.csv"))
+                      (filter #(> (-> % get-csv-entry-info count) 0))
+                      sort)
+        fsre (re-pattern fs/separator)
+        hit-groups (partition-by
+                    (fn[f]
+                      (->> f (str/split fsre) last
+                           (str/split #"\.") first))
+                    nonempty)]
+    (doseq [g hit-groups]
+      (let [header (->> g first io/read-lines first)
+            outfile (->> header csv/parse-csv first last
+                         (str/split fsre) last
+                         (#(str % ".aggregate.cmsearch.csv"))
+                         (fs/join dir))]
+        (io/with-out-writer outfile
+          (println header)
+          (doseq [f g]
+            (doseq [l (drop 1 (io/read-lines f))]
+              (println l))))))))
 
 ;;; ----------------------------------------------------------------------
 ;;;
@@ -936,17 +967,34 @@
    ensures various #GF commentary lines are preserved and places a
    marker in the output indicating start of new aligned sequences.
   "
-  [isto cm ent]
-  (let [fna (entry-file->fasta-file ent :names-only true)
-        oldext (->> isto (re-find #"[0-9]+([A-Z]|)\.sto$") first)
-        nxtver (->> oldext (re-find #"[0-9]+") (Integer.) inc (str))
+  [isto cm ent & [ctxsz]]
+  (let [oldver (->> isto (re-find #"[0-9]+([A-Z]|)\.sto$")
+                    first (re-find #"[0-9]+"))
+        nxtver (->> oldver Integer. inc str)
         osto (str/replace-re #"[0-9]+([A-Z]|)\.sto" (str nxtver ".sto") isto)
+        added (-> ent (read-seqs :info :name) count)
         gc-lines (first (join-sto-fasta-lines isto ""))
-        _ (cmalign cm fna osto :opts ["--withali" isto "-q" "-1"])
+
+        _ (if (fs/empty? ent)
+            ;; Nothing new for this run
+            (fs/copy isto osto)
+            ;; Else, full blown foldin old with new realign
+            (let [fna (entry-file->fasta-file ent :names-only true)]
+              (cmalign cm fna osto
+                       :opts [(if (infernal-2+?) "--mapali" "--withali")
+                              isto])))
+
         [_ seq-lines cons-lines] (join-sto-fasta-lines osto "")
-        cons-lines (butlast cons-lines)]
+        cons-lines (butlast cons-lines)
+        gf-added (str "#=GF ADDED " oldver "->" nxtver " " added)
+        gf-ctxsz (if ctxsz (str "#=GF CTXSZ " ctxsz) nil)]
+
     (io/with-out-writer osto
-      (doseq [gcl gc-lines] (println gcl))
+      (doseq [gcl (take 2 gc-lines)] (println gcl)) ; Stockholm & origin
+      (println)
+      (when gf-ctxsz (println gf-ctxsz)) ; ctx size gf line
+      (println gf-added) ; Num sqs added this time
+      (doseq [gcl (drop 2 gc-lines)] (println gcl)) ; remainders
       (println)
       (doseq [[nm [_ sq]] seq-lines] (cl-format true "~A~40T~A~%" nm sq))
       (doseq [[nm [_ sq]] cons-lines] (cl-format true "~A~40T~A~%" nm sq))
@@ -972,7 +1020,9 @@
         stos (or (seq (config :cmbuilds))
                  (seq (fs/directory-files stodir "sto")))
         cms  (or (seq (config :calibrates))
-                 (seq (fs/directory-files cmdir "cm")))]
+                 (seq (fs/directory-files cmdir "cm")))
+        csvdir (first (config :gen-csvs)) ; HACK (see job-config...)
+        ctxsz (atom {})]
 
     (when (and (config :check-sto) (config :cmbuild))
       (chk-stos stos))
@@ -1001,15 +1051,67 @@
       ;; Generate csvs for all cmsearch.out's in the cmdir.  If the
       ;; csvdir does not exist, generate it.  Place all generated csvs
       ;; into csvdir
-      (when-let [csvdir (config :gen-csvs)]
+      (when csvdir
         (when (not (fs/exists? csvdir)) (fs/mkdir csvdir))
         (when (seq cmouts)
           (doseq [cmout cmouts] (cmsearch-out-csv cmout))
           (let [csvs (fs/directory-files cmdir "csv")]
             (doseq [csv csvs]
               (let [fname (fs/basename csv)]
-                (fs/rename csv (fs/join csvdir fname)))))))
-      :good)))
+                (fs/rename csv (fs/join csvdir fname))))))
+        (when-let [aggr-dir ((into {} (rest (config :gen-csvs))) :aggregate)]
+          (aggregate-csvs csvdir)
+          (when-let [orig (first (fs/glob (fs/join csvdir "*agg*.csv")))]
+            (fs/rename orig (fs/join aggr-dir (fs/basename orig)))))))
+
+    ;; Sequence Conservation, Context, Size filtering.  Take cmsearch
+    ;; results and automatically filter into pos and neg sets
+    (when-let [sccs (config :sccs)]
+      (let [opts (into {} sccs)
+            stos (opts :stos stos)
+            stos (if (string? stos) (fs/glob (fs/join stodir stos)) stos)
+            csv-dir (opts :csv-dir csvdir)
+            out-dir (opts :out-dir csv-dir)
+            chart-dir (fs/join stodir "Charts")]
+        (when (not (fs/exists? chart-dir)) (fs/mkdir chart-dir))
+        (doseq [sto stos]
+          (let [sb (fs/basename sto)
+                cmscsv (first (fs/glob (str csv-dir "/*" sb "*.cmsearch.csv")))
+                run (->> sb (re-find #"[0-9]+([A-Z]|)\.sto$") first
+                         (re-find #"[0-9]+") Integer. inc)
+                [csz gfcsz-found] (hit-context-delta sto :plot chart-dir)]
+            (when (not gfcsz-found) ; If gen-stos runs and need to save ctxsz
+              (swap! ctxsz #(assoc % sb csz)))
+            (compute-candidate-sets
+             sto cmscsv
+             run csz
+             :refn jensen-shannon
+             :xlate +RY-XLATE+ :alpha ["R" "Y"]
+             :crecut 0.01 :limit 19
+             :plot-dists chart-dir)))))
+
+    ;; Take pos SCCS sets, plus the input stos (and corresponding cms)
+    ;; and generate the next stage stos
+    (when-let [gen-stos (config :gen-stos)]
+      (let [opts (into {} gen-stos)
+            stos (opts :stos stos)
+            stos (if (string? stos) (fs/glob (fs/join stodir stos)) stos)
+            sccs (config :sccs)
+            sccs-dir (some #(when (= (first %) :out-dir) (second %)) sccs)
+            sccs-dir (opts :sccs-dir (or sccs-dir csvdir))
+            out-dir (opts :out-dir (fs/dirname (first stos)))]
+        (doseq [sto stos]
+          (let [sb (fs/basename sto)
+                csz (get (deref ctxsz) sb)
+                cm (->> (str "*" sb "*.cm")
+                        (fs/join cmdir)
+                        fs/glob first)
+                ent (->> (str "*" sb "*-final.ent")
+                         (fs/join sccs-dir)
+                         fs/glob first)]
+            (next-sto sto cm ent csz)))))
+
+    :good))
 
 (defn run-config-job-checked
   "Run a configuration with catch and print for any exceptions"
