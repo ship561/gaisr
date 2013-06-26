@@ -129,6 +129,20 @@
      (or (getenv "GAISR_DEFAULT_GENOME_DIR")
          "/data2/BioData/GenomeSeqs/RefSeq58"))
 
+(defn split-join-fasta-file
+  [in-file out-dir
+   & {:keys [base pat] :or {base default-genome-fasta-dir pat #"^gi"}}]
+  (doseq [[gi sq] (->> in-file io/read-lines
+                       (partition-by #(re-find pat %))
+                       (partition-all 2)
+                       (map (fn[[[nm] sbits]] [nm (apply str sbits)])))]
+    (let [nm (->> gi (str/split #"\|") (drop 3) first
+                  (str/split #"\.") first)]
+      (when (re-find #"^NC_" nm)
+        (io/with-out-writer (fs/join base (str nm ".fna"))
+          (println gi)
+          (println sq))))))
+
 (defn split-join-ncbi-fasta-file
   "Split a fasta file IN-FILE into the individual sequences and
    unblock the sequence if blocked.  The resulting individual [nm sq]
@@ -158,6 +172,30 @@
           (io/with-out-writer (fs/join base (str nm ".fna"))
             (println gi)
             (println sq)))))))
+
+
+(defn chunk-genome-fnas
+  "Take the set of fnas in directory GENOME-FNA-DIR (presumably
+   created by split-join-ncbi-fasta-file or similar) and aggregate
+   them into a new smaller set of files, where each new file contains
+   the contents of CHUNK-SIZE input files (with the possible exception
+   of the last file having a smaller number).  This is useful for
+   creating custom data sets for search.
+  "
+  [genome-fna-dir &
+  {:keys [chunk-size] :or {chunk-size 100}}]
+  (let [dir (fs/join genome-fna-dir "Chunked")
+        all (->> (fs/directory-files genome-fna-dir ".fna") sort
+                 (partition-all chunk-size))]
+    (when (not (fs/exists? dir)) (fs/mkdir dir))
+    (doseq [grp all]
+      (let [n1 (-> grp first fs/basename (fs/replace-type ""))
+            n2 (-> grp last fs/basename (fs/replace-type ""))
+            file (fs/join dir (str n1 "-" n2 ".fna"))]
+        (io/with-out-writer file
+          (doseq [f grp
+                  l (io/read-lines f)]
+            (println l)))))))
 
 
 ;;; Convert STO format to ALN format (ClustalW format).  This is
@@ -220,6 +258,52 @@
         (doseq [sl seq-lines]
           (println sl)))
       alnout)))
+
+
+
+
+;;; Cool stuff from Shermin, but requires much more refactoring of
+;;; various other things of his to make it all work. See his fold-ops.
+(defn print-sto
+  "takes sequence lines and a structure line and writes it into a sto
+  format file. the seq-lines needs to be a collection of [name
+  sequence] pairs. structure is a string. Simply prints out to the
+  repl."
+
+  [seq-lines structure]
+  (println "# STOCKHOLM 1.0\n")
+  (doseq [sq seq-lines]
+    (let [[nm sq] (if (vector? sq)
+                    sq
+                    (str/split #"\s+" sq))]
+      (cl-format true "~A~40T~A~%" nm (str/replace-re #"\-" "." sq))))
+  (cl-format true "~A~40T~A~%" "#=GC SS_cons" structure)
+  (println "//"))
+
+#_(defn aln->sto
+  "takes an alignment in Clustal W format and produces a sto file by
+   using RNAalifold to determine the structure and then making it into
+   a sto file adding header and a consensus line"
+
+  [in-aln out-sto & {:keys [fold-alg st]
+                     :or {fold-alg "RNAalifold"}}]
+  (cond
+   (identity st) ;structure provided
+   (let [sq (read-seqs in-aln :type "aln")]
+     (io/with-out-writer out-sto
+       (print-sto sq st))
+     out-sto)
+
+   (= fold-alg "RNAalifold") ;structure from RNAalifold
+   (let [st (fold-aln in-aln)
+         sq (read-seqs in-aln :type "aln")]
+     (io/with-out-writer out-sto
+       (print-sto sq st))
+     out-sto) ;return out sto filename
+
+   ;;else use cmfinder
+   #_(shell/sh "perl" "/home/kitia/bin/gaisr/src/mod_cmfinder.pl" in-aln out-sto)))
+
 
 
 ;;; Forward declarations...
@@ -310,6 +394,19 @@
          "/data2/BioData/BlastDBs/RefSeq58/refseq58_microbial_genomic"))
 
 
+(defn make-entry
+  "'Inverse' of entry-parts.  EVEC is a vector of shape [nm [s e]
+   strd], where nm is the entry name, S and E are the start and end
+   coordinates in the genome, and strd is the strand marker, 1 or
+   -1. Returns the full entry as: nm/s-e/strd
+  "
+  ([evec]
+     (let [[nm [s e] st] evec]
+       (str nm "/" s "-" e "/" st)))
+  ([nm s e st]
+     (make-entry [nm [s e] st])))
+
+
 (defn entry-parts
   "ENTRY is a string \"name/range/strand\", where name is a genome
    name, range is of the form start-end and strand is 1 or -1.  At
@@ -320,7 +417,7 @@
   "
   [entry & {:keys [ldelta rdelta] :or {ldelta 0 rdelta 0}}]
   (let [[name range] (str/split #"( |/|:)+" 2 entry)
-        name (re-find #"[A-Z]+_[A-Za-z0-9]+" name)
+        name (re-find #"[A-Za-z0-9]+_[A-Za-z0-9_]+" name)
         [range strand] (if range (str/split #"/" range) [nil nil])
         [s e st] (if (not range)
                    [1 Long/MAX_VALUE "1"]
@@ -568,6 +665,101 @@
 
 
 
+;;; ----------------------------------------------------------------------- ;;;
+
+;;;  This crap needs to be refactored and most of it probably
+;;;  eliminated.  Most of it is old stuff that is largely superceded
+;;;  but still required by things in post-db-csv, but we at least fix
+;;;  up the names of the csv processors to more accurately reflect
+;;;  what they are!
+
+
+(defn get-legacy-csv-info [rows]
+  (let [newnes [:rfam :overlap :new]]
+    (loop [entries []
+           rows (drop 1 rows)]
+      (let [entry (first rows)]
+        (if (< (count entry) 24)
+          (sort #(string-less? (%1 0) (%2 0)) entries)
+          (recur (conj entries
+                       [(entry 4) (entry 9) (entry 10) (entry 24)
+                        (entry 11)
+                        (newnes (Integer/parseInt (entry 15)))
+                        (entry 13)])
+                 (drop 1 rows)))))))
+
+(defn get-gaisr-csv-info [rows]
+  (loop [entries []
+         rows (drop 1 rows)]
+    (let [entry (first rows)]
+      (if (< (count entry) 12) ; minimum used fields
+        (sort #(string-less? (%1 0) (%2 0)) entries)
+        (recur (conj entries
+                     [(entry 0) (entry 3) (entry 4) (entry 9)
+                      (entry 8)
+                      :new "N/A"])
+               (drop 1 rows))))))
+
+
+(defn canonical-csv-entry-info [entries]
+  (map #(let [[nm [s e] sd] (entry-parts %)
+              [s e] (if (= sd "1") [s e] [e s])]
+          [nm s e 0.0 0.0 :new sd])
+       entries))
+
+(defn get-sto-as-csv-info [stofile]
+  (let [entries (read-seqs stofile :info :name)]
+    (canonical-csv-entry-info entries)))
+
+(defn get-ent-as-csv-info [ent-file]
+  (let [entries (io/read-lines ent-file)]
+    (if (> (->> entries first csv/parse-csv first count) 1)
+      (let [einfo (canonical-csv-entry-info
+                   (map #(->> % (str/split #",") first) entries))
+            entropy-scores (->> ent-file slurp csv/parse-csv
+                                butlast (map second))]
+        (map (fn[[nm s e _ _ x y] score] [nm s e score 0.0 x y])
+             einfo entropy-scores))
+      (canonical-csv-entry-info entries))))
+
+
+(defn get-csv-entry-info [csv-hit-file]
+  (let [file (fs/fullpath csv-hit-file)
+        ftype (fs/ftype file)]
+    (cond
+     (= ftype "sto") (get-sto-as-csv-info file)
+     (= ftype "ent") (get-ent-as-csv-info file)
+     :else
+     (let [rows (csv/parse-csv (slurp file))
+           head (first rows)]
+       (if (= (first head) "gaisr name")
+         (get-gaisr-csv-info rows)
+         (get-legacy-csv-info rows))))))
+
+
+
+;;; This one was from dists and punted to the old get-enties in
+;;; post-db-csv for csv entries
+;;;
+(defn get-entries
+  [filespec & [seqs]]
+  (let [fspec (fs/fullpath filespec)
+        ftype (fs/ftype fspec)]
+    (if (not= ftype "csv")
+      (read-seqs filespec :info (if seqs :data :name))
+      (->> (get-csv-entry-info fspec)
+           (keep (fn[[nm s e sd]]
+                   (when (fs/exists? (fs/join default-genome-fasta-dir
+                                              (str nm ".fna")))
+                     (str nm "/"
+                          (if (> (Integer. s) (Integer. e))
+                            (str e "-" s "/-1")
+                            (str s "-" e "/1"))))))
+           (#(if seqs (map second (gen-name-seq-pairs %)) %))))))
+
+
+
+
 ;;;------------------------------------------------------------------------;;;
 ;;; Various sequence file readers for various formats.  In particular,
 ;;; fna, sto, and aln
@@ -633,16 +825,16 @@
    gma file format file.
   "
   [filespec & {:keys [info type] :or {info :data type (fs/ftype filespec)}}]
-  (let [f   (seqline-info-mapper type info)
-        ;;sqs (str/split-lines (slurp filespec)) ; <-- NOT LAZY!!
-        sqs (filter #(let [l (str/replace-re #"^\s+" "" %)]
-                       (and (not= l "") (not (.startsWith l "#"))))
-                    (io/read-lines filespec))
-        sqs (if (re-find #"^CLUSTAL" (first sqs)) (rest sqs) sqs)
-        sqs (drop-until #(re-find #"^(>[A-Za-z]|[A-Za-z])" %) sqs)
-        sqs (if (in type ["fna" "fa" "hitfna"]) (partition 2 sqs) sqs)
-        sqs (if (= type "sto") (take-while #(re-find #"^[A-Z]" %) sqs) sqs)]
-    (map f sqs)))
+  (when (not (fs/empty? filespec))
+    (let [f   (seqline-info-mapper type info)
+          sqs (filter #(let [l (str/replace-re #"^\s+" "" %)]
+                         (and (not= l "") (not (.startsWith l "#"))))
+                      (io/read-lines filespec))
+          sqs (if (re-find #"^CLUSTAL" (first sqs)) (rest sqs) sqs)
+          sqs (drop-until #(re-find #"^(>[A-Za-z]|[A-Za-z])" %) sqs)
+          sqs (if (in type ["fna" "fa" "hitfna"]) (partition 2 sqs) sqs)
+          sqs (if (= type "sto") (take-while #(re-find #"^[A-Z]" %) sqs) sqs)]
+      (map f sqs))))
 
 
 (defn read-aln-seqs

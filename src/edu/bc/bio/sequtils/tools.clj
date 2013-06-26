@@ -3,7 +3,7 @@
 ;;                     S E Q U T I L S . T O O L S                          ;;
 ;;                                                                          ;;
 ;;                                                                          ;;
-;; Copyright (c) 2011-2012 Trustees of Boston College                       ;;
+;; Copyright (c) 2011-2013 Trustees of Boston College                       ;;
 ;;                                                                          ;;
 ;; Permission is hereby granted, free of charge, to any person obtaining    ;;
 ;; a copy of this software and associated documentation files (the          ;;
@@ -389,15 +389,16 @@
 
    The return map has entries: [embl-id [vec-of-best-ncbi-entries]].
   "
-  [blast-output-file]
+  [blast-output-file embl-seq-size-map]
   (reduce
-   (fn[m x]
+   (fn[[m bm] x]
      (let [embl-entry (first x)
            nc-nm (->> (nth x 4) (str/split #"\|") last
                       (re-find #"^[A-Za-z_0-9]+"))
            ev (Double. (nth x 3))]
        (if (and (refseq-entry? nc-nm)
                 (= (second x) "1")
+                (= (Integer. (third x)) (embl-seq-size-map embl-entry))
                 ;; somewhat arbitrary, but real examples should
                 ;; have very low evalues
                 (< ev 1e-05))
@@ -405,9 +406,13 @@
                e (Integer. (nth x 6))
                [s e sd] (if (> s e) [e s -1] [s e 1])
                entry (str nc-nm "/" s "-" e "/" sd)]
-           (assoc m embl-entry (conj (get m embl-entry []) entry)))
-         m)))
-   {} (butlast (csv/parse-csv (slurp blast-output-file)))))
+           [(assoc m embl-entry (conj (get m embl-entry []) entry)) bm])
+
+         ;; else its 'bad'.  NOTE, we check if it is already found as
+         ;; a good example in the blast output, as it can occur
+         ;; multiple times - possible 1 or more good and several 'bad'
+         [m (if (contains? m embl-entry) bm (assoc bm embl-entry :bad))])))
+   [{} {}] (butlast (csv/parse-csv (slurp blast-output-file)))))
 
 
 (defn embl-sto->nc-sto
@@ -422,16 +427,22 @@
   [stoin & {:keys [blastout]}]
   (let [fna (fs/replace-type stoin ".fna")
         ncsto (fs/replace-type stoin "-NC.sto")
+        badsto (fs/replace-type stoin "-bad.sto")
         misc (str "-perc_identity 100.0")
         _ (sto->fna stoin fna)
         blastout (or blastout (blast :blastn fna :strand :both :misc misc))
         embl-aln-pairs (->> stoin (#(read-seqs % :info :both)) (into {}))
+        embl-seq-sizes (->> embl-aln-pairs
+                            (map (fn[[nm sq]] [nm (->> sq degap-seqs count)]))
+                            (into {}))
+        [good-map bad-map] (get-embl-blast-candidates blastout embl-seq-sizes)
         nc-aln-pairs (reduce
                       (fn [V [id v]]
                         (conj V [(rand-nth v) (embl-aln-pairs id)]))
-                      [] (get-embl-blast-candidates blastout))
+                      [] good-map)
         [sqs-gcs hdgf-lines] (sto-GC-and-seq-lines stoin)
         gc-lines (filter #(.startsWith % "#") sqs-gcs)]
+
     (io/with-out-writer ncsto
       (println (first hdgf-lines))
       (println (second hdgf-lines) "\n")
@@ -442,7 +453,17 @@
         (let [[gc kind v] (str/split #"\s+" 3 gcline)]
           (cl-format true "~A~40T~A~%" (str gc " " kind) v)))
       (println "//"))
-    ncsto))
+
+    (io/with-out-writer badsto
+      (println (first hdgf-lines))
+      (println (second hdgf-lines) "\n")
+      (doseq [embl (keys bad-map)]
+        (cl-format true "~A~40T~A~%" embl (embl-aln-pairs embl)))
+      (doseq [gcline gc-lines]
+        (let [[gc kind v] (str/split #"\s+" 3 gcline)]
+          (cl-format true "~A~40T~A~%" (str gc " " kind) v)))
+      (println "//"))
+    [ncsto badsto]))
 
 
 (defn embl-to-nc
@@ -455,22 +476,30 @@
    over full database and selects the hits with exact size and content
    match.  If multiple candidates, selects randomly.
   "
-  [fin]
+  [fin & {:keys [blastout]}]
   {:pre [(in (fs/ftype fin) ["sto" "fna"])]}
   (if (= (fs/ftype fin) "sto")
     (embl-sto->nc-sto fin)
     (let [fna (fs/fullpath fin)
           ncfna (fs/replace-type fna "-NC.fna")
+          badfna (fs/replace-type fna "-bad.fna")
           misc (str "-perc_identity 100.0")
-          blastout (blast :blastn fna :strand :both :misc misc)
+          blastout (or blastout (blast :blastn fna :strand :both :misc misc))
           embl-seq-pairs (->> fna (#(read-seqs % :info :both)) (into {}))
+          embl-seq-sizes (->> embl-seq-pairs
+                              (map (fn[[nm sq]] [nm (count sq)]))
+                              (into {}))
+          [good-map bad-map] (get-embl-blast-candidates blastout embl-seq-sizes)
           nc-seq-pairs (reduce
                         (fn[V [id v]]
                           (conj V [(rand-nth v) (embl-seq-pairs id)]))
-                        [] (get-embl-blast-candidates blastout))]
+                        [] good-map)]
       (io/with-out-writer ncfna
         (doseq [[nc sq] nc-seq-pairs] (cl-format true ">~A~%~A~%" nc sq)))
-      ncfna)))
+      (io/with-out-writer badfna
+        (doseq [embl (keys bad-map)]
+          (cl-format true ">~A~%~A~%" embl (embl-seq-pairs embl))))
+      [ncfna badfna])))
 
 
 
@@ -561,6 +590,46 @@
      (apply do-entry-file-set-op
             set/intersection
             (map #(get-entry-set full %) (cons f1 (cons f2 fs))))))
+
+
+(defn entry-file-difference-with-seqs
+  "Like entry-file-difference, but returns corresponding sqs for the
+   result entry set as well.  Uses the full entry (full is true for
+   entry-file-difference).  Difference the entries in files f1 f2, and
+   if non empty those in fs as well _in that order_.  The result is
+   thus the total 'subtraction' of all elements from all fi, i /= 1,
+   from f1.  Take the result set and create the set of pairs [entry
+   sq] for each entry in the set.  Returns the resulting sequence of
+   pairs.
+  "
+  [f1 f2 & fs]
+  (apply do-entry-file-set-op-with-seqs
+         set/difference
+         (map #(get-entry-set true %) (cons f1 (cons f2 fs)))))
+
+
+
+;; (ns-unmap *ns* 'entry-file-setop)
+(defmulti entry-file-setop
+  "Generic interface to entry file set operations with and without seqs"
+  (fn[op with-seqs & args]
+    [op with-seqs]))
+
+(defmethod entry-file-setop [:intersect false]
+  [_ _ & args]
+  (apply entry-file-intersect args))
+
+(defmethod entry-file-setop [:intersect true]
+  [_ _ & args]
+  (apply entry-file-intersect-with-seqs args))
+
+(defmethod entry-file-setop [:difference false]
+  [_ _ & args]
+  (apply entry-file-difference args))
+
+(defmethod entry-file-setop [:difference true]
+  [_ _ & args]
+  (apply entry-file-difference-with-seqs args))
 
 
 
@@ -943,16 +1012,16 @@
   (let [opts (if (string? opts)
                (str "-E " eval " " opts)
                (->> opts (cons eval) (cons "-E")))
-        cmsearchcmd (mk-infernal-cmd "cmsearch" opts)
         cmfile (fs/fullpath cmfile)
         dbfile (fs/fullpath fna-file)
         outfile (fs/fullpath outfile)
-        mpirun "mpirun"
-        mpiargs `["-np" ~(str par) ~@cmsearchcmd ~cmfile ~dbfile]]
+        cmsearchcmd (conj (mk-infernal-cmd "cmsearch" opts)
+                          cmfile dbfile)
+        mpiargs `["-np" ~(str par) ~@cmsearchcmd]]
     (io/with-out-writer outfile
       (print (if (infernal-2+?)
-               (apply runx (conj cmsearchcmd cmfile dbfile))
-               (runx mpirun mpiargs))))
+               (apply runx cmsearchcmd)
+               (runx "mpirun" mpiargs))))
     outfile))
 
 
@@ -968,20 +1037,21 @@
    through FFP and/or Scribl process yielding a new set of candidate
    targets that have been placed in seqfile.
   "
-  [cm seqfile outfile
-   & {:keys [opts par] :or {opts ["-q" "-1"] par 3}}]
-  (let [infernal-path (get-tool-path :infernal)
-        cmaligncmd (str infernal-path "cmalign")
+  [cm seqfile outfile & {:keys [opts par] :or {par 3}}]
+  (let [vopts (if (infernal-2+?) ["--cpu" "3" "--noprob"] ["--mpi" "-q" "-1"])
+        opts (if (string? opts)
+               (str/join " " (conj vopts opts))
+               (concat vopts opts))
         cmfile (fs/fullpath cm)
         seqfile (fs/fullpath seqfile)
         outfile (fs/fullpath outfile)
-        mpirun "mpirun"
-        cmdargs (conj (vec (concat ["-np" (str par)
-                                    cmaligncmd "--mpi" "-o" outfile]
-                                   opts))
-                      cmfile seqfile)]
+        cmaligncmd (conj (mk-infernal-cmd "cmalign" opts)
+                         "-o" outfile cmfile seqfile)
+        mpiargs `["-np" ~(str par) ~@cmaligncmd]]
+
     (if (fs/empty? seqfile)
       (raise :type :empty-seq-file :file seqfile)
-      (do (assert-tools-exist [cmaligncmd])
-          (runx mpirun cmdargs)))
+      (if (infernal-2+?)
+        (apply runx (conj cmaligncmd :> "/dev/null"))
+        (runx "mpirun" mpiargs)))
     outfile))
