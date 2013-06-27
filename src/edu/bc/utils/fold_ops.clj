@@ -1,13 +1,15 @@
 (ns edu.bc.utils.fold-ops
-  (:require [clojure.string :as str]
+  (:require [clojure.contrib.io :as io]
+            [clojure.string :as str]
             [clojure.java.shell :as shell]
             [edu.bc.fs :as fs])
   (:use refold
+        [edu.bc.bio.sequtils.files :only [join-sto-fasta-file]]
         [slingshot.slingshot :only [throw+]]))
 
 (def param-file (let [viennadir (if (fs/directory? "/usr/local/ViennaRNA/")
                                   "/usr/local/ViennaRNA/" 
-                                  (str (fs/homedir) "/bin/ViennaRNA/"))
+                                  (fs/join (fs/homedir) "/bin/ViennaRNA/"))
                       pfile (str viennadir "rna_andronescu2007.par")
                       pfile (if (fs/exists? pfile)
                               pfile
@@ -110,9 +112,9 @@
 
 ;(ns-unmap 'edu.bc.utils.fold-ops 'fold2)
 (defmulti fold2 (fn [s & args]
-                  ((or (first args) {}) :foldtype)))
+                  ((or (first args) {}) :foldmethod)))
 
-(defmethod fold2 ::mfe [s args]
+(defmethod fold2 :RNAfold [s args]
   (-> ((shell/sh "RNAfold"
                  "-P" param-file
                  "--noPS"
@@ -123,7 +125,7 @@
       (str/split #" ")
       first))
 
-(defmethod fold2 ::subopt [s args] 
+(defmethod fold2 :RNAsubopt [s args] 
   (->> ((shell/sh "RNAsubopt"
                   "-p" (str (args :n))        ;samples according to
                                         ;Boltzmann distribution
@@ -132,11 +134,11 @@
        str/split-lines
        (remove #(re-find #"[^\(\)\.]" %))))
 
-(defmethod fold2 ::centroid [s args]
+(defmethod fold2 :centroid [s args]
   (first (suboptimals s (args :n))))
 
 (defmethod fold2 :default [s]
-  (fold2 s {:foldtype ::mfe}))
+  (fold2 s {:foldmethod ::RNAfold}))
 
 (defn fold
   "Folds a sequence of RNA and returns only the target
@@ -180,15 +182,66 @@
          (remove #(re-find #"[^\(\)\.]" %)))
     ))
 
-(defn fold-aln [aln]
+(defn align-fold
+  "Takes a fasta file and outputs an alignment with structure in
+  stockholm file format. The outfile is the input file renamed to have
+  a .sto extension. Uses mxscarna to do the fold/align"
+
+  ([fna]
+     (align-fold fna (fs/replace-type fna ".sto")))
+  
+  ([fna outfile]
+     (let [tmp (fs/tempfile)
+           call (shell/sh "mxscarna" "-stockholm" fna)]
+       (io/with-out-writer tmp
+         (-> call :out println))
+       (join-sto-fasta-file tmp outfile :origin "#=GF AU mxscarna")
+       outfile)))
+
+;;;(ns-unmap 'edu.bc.utils.fold-ops 'fold-aln)
+(defmulti
+
+  ^{:doc "multimethod for folding an alignment. can use
+  either :RNAalifold or :centroid_alifold as the first argument or
+  none in args. Defaults to :RNAalifold. Always requires a file
+  name (aln)."
+    :arglists '([aln] [foldprogram aln])}
+  
+  fold-aln (fn [& args]
+             (first args)))
+
+(defmethod fold-aln :RNAalifold [_ aln]
   (-> ((shell/sh "RNAalifold"
-                  "-P" param-file
-                  "-r" "--noPS" aln)
-        :out)
-       (str/split-lines)
-       second
-       (str/split #"\s")
-       first))
+                 "-P" param-file
+                 "-r" "--noPS" aln)
+       :out)
+      str/split-lines
+      second
+      (str/split #"\s")
+      first))
+
+(defmethod fold-aln :centroid_alifold [_ aln]
+  (-> ((shell/sh "centroid_alifold" aln)
+       :out)
+      str/split-lines
+      last
+      (str/split #"\s")
+      first))
+
+(defmethod fold-aln :default [aln]
+  {:pre [(fs/exists? aln)]}
+  (fold-aln :RNAalifold aln))
+
+(comment 
+  (defn fold-aln [aln]
+    (-> ((shell/sh "RNAalifold"
+                   "-P" param-file
+                   "-r" "--noPS" aln)
+         :out)
+        (str/split-lines)
+        second
+        (str/split #"\s")
+        first)))
 
 (defn bpdist
   "finds the distance between 2 structures. uses tree edit distance by

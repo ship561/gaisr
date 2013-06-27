@@ -54,11 +54,12 @@
   shapiro-notation-distance]"
 
   [insto]
-  (let [norm-dist (fn [d L] (- 1 (/ d L)))]
+  (let [norm-dist (fn [d L] (- 1 (/ d L)))] ;1-d/L
     (for [s (sto->seqs insto)
           :let [len (-> (io/read-lines s)
                         first
                         count)]]
+      ;;first parses the RNAmute output then normalizes it in the mapfn
       (mapv #(norm-dist % len)
            (do (run-rnamute s)
                (parse-output))))))

@@ -48,7 +48,8 @@
    cons-keys. Takes a seq (s) and structure (st)"
 
   [s st]
-  (let [[s st] (remove-gaps s st)
+  (let [s (.toUpperCase s)
+        [s st] (remove-gaps s st)
         cons-keys (set (keys (struct->matrix st)))]
     [s st cons-keys]))
 
@@ -168,7 +169,7 @@
   
   [sto & {:keys [ncore nsubopt altname]
           :or {ncore 6 nsubopt 1000 altname sto}}]
-  (let [{l :seqs cons :cons} (read-sto sto :with-names true)
+  (let [{l :seqs cons :cons} (read-sto sto :info :both)
         cons (change-parens (first cons))
         cores (quot ncore
                     (count l))
@@ -202,7 +203,7 @@
    fold into part of the cons structure."
   
   [sto]
-  (let [{sqs :seqs cons :cons} (read-sto sto :with-names true)
+  (let [{sqs :seqs cons :cons} (read-sto sto :info :both)
         cons (change-parens (first cons))
         valid? (fn [st] (pos? (count (struct->matrix st))))]
     (every? true? (map (fn [[_ s]]
@@ -263,10 +264,9 @@
    <1-d/L>."
   
   [s st n]
-  (let [[s st cons-keys] (degap-conskeys s st)]
-    (->> (subopt-overlap-neighbors s cons-keys :nsubopt n)
-        (map mean ) ;subopt-overlap
-        mean))) ;neutrality
+  (->> (subopt-overlap-neighbors s st :nsubopt n)
+       (map mean ) ;subopt-overlap
+       mean)) ;neutrality
 
 (defn subopt-robustness
   "Takes an input sto and estimates the significance of the robustness
@@ -281,7 +281,7 @@
                  nsubopt 1000}}]
   (let [ ;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
         inv-sto (str (str/butlast 3 sto) "inv.clj")
-        {l :seqs cons :cons} (read-sto sto :with-names true)
+        {l :seqs cons :cons} (read-sto sto :info :both)
         cons (change-parens (first cons))
         ]
     [sto
@@ -289,7 +289,7 @@
             (let [[s st cons-keys] (degap-conskeys s cons)
                   inv-seq (create-inv-seqs nm s st n inv-sto) ;vector of n inverse-folded seqs
                   neut (map (fn [x]
-                              (subopt-overlap-neighbors x cons-keys :ncore ncore :nsubopt nsubopt))
+                              (subopt-overlap-neighbors x st :ncore ncore :nsubopt nsubopt))
                             (concat (list s) inv-seq))]
               ;;average %overlap for each wt and inv-fold seq
               (map (fn [x]
@@ -313,8 +313,7 @@
   Robustness = neutrality(wt) > mean neutrality(1-muts) "
 
   [list-dists]
-  (let [subopt-overlap (fn [dist]
-                         (mean dist))]
+  (let [subopt-overlap (fn [dist] (mean dist))]
     (-> (map subopt-overlap list-dists) ;calc subopt overlap of each 1-mut 
         mean) ;neutrality
     ))
@@ -331,7 +330,8 @@
               ;;summary stats of neutrality for sto
               (assoc m nm {:median (median neut)
                            :mean (mean neut) ;sto mean neutrality
-                           :sd (sd neut)})))
+                           :sd (sd neut)
+                           :raw neut})))
           {} x))
 
 (defn combine-neighbors [list-maps]
@@ -411,7 +411,7 @@
                                 (apply fs/join)))
         sto (first map-of-per-overlaps)
         sto-file (str homedir "/" (fsdrop 2 sto)) 
-        seq-names (map first (-> (read-sto sto-file :with-names true) :seqs))
+        seq-names (map first (-> (read-sto sto-file :info :both) :seqs))
         lines (map (fn [original-seq pts-avg]
                      (loop [os original-seq
                             pa pts-avg
@@ -672,7 +672,7 @@
                             ]
                         (doall 
                          (map (fn [sto]
-                                  (let [{l :seqs cons :cons} (read-sto (str fdir sto) :with-names true)
+                                  (let [{l :seqs cons :cons} (read-sto (str fdir sto) :info :both)
                                         cons (change-parens (first cons))]
                                   [sto
                                    (doall (pxmap
@@ -733,7 +733,7 @@
                 ]
             (doall 
              (map (fn [sto]
-                    (let [{l :seqs cons :cons} (read-sto (str fdir sto) :with-names true)
+                    (let [{l :seqs cons :cons} (read-sto (str fdir sto) :info :both)
                           cons (change-parens (first cons))]
                       [sto
                        (doall (map
@@ -881,7 +881,7 @@
 ;;;inverse folded sequence which is similar to the cons structure. This should show that the neutrality
 ;;;of the original sequence is significantly robust when compared to its inverse folded sequences.
 (let [sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
-      {l :seqs cons :cons} (read-sto sto :with-names true)
+      {l :seqs cons :cons} (read-sto sto :info :both)
       cons (change-parens (first cons))]
   [sto 
    (pxmap (fn [[nm s]]
@@ -901,9 +901,8 @@
                                                 (partition-all 2))
                                            ))))
                   inv-seq (inv-fold st 100)
-                  cons-keys (set (keys (struct->matrix st)))
                   neut (map (fn [x]
-                              (subopt-overlap-neighbors x cons-keys :nsubopt 1000))
+                              (subopt-overlap-neighbors x st :nsubopt 1000))
                             (concat (list s) inv-seq))]
               (map (fn [x] (->> x (apply merge-with +) mean double)) neut)))
           2
@@ -955,7 +954,7 @@
 
 
 (let [sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
-                  {l :seqs cons :cons} (read-sto sto :with-names true)
+                  {l :seqs cons :cons} (read-sto sto :info :both)
                   cons (change-parens (first cons))]
               (io/with-out-writer "/home/kitia/bin/gaisr/robustness/struct-confirm.txt"
                 (prn sto)
@@ -1034,7 +1033,7 @@
                     (prn i)))))
 
 (let [sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
-      {l :seqs cons :cons} (read-sto sto :with-names true)
+      {l :seqs cons :cons} (read-sto sto :info :both)
       cons (change-parens (first cons))]
   (io/with-out-writer "/home/kitia/bin/gaisr/robustness/struct-confirm.txt"
     (prn sto)
@@ -1079,7 +1078,7 @@
                   invseqs (filter #(re-find #"\.inv.clj" %) (fs/listdir fdir))
                   stos (map #(str (str/butlast 7 %) "sto") invseqs)
                   foo (map (fn [sto invseq]
-                             (let [sto-seq (->> (read-sto (str fdir sto) :with-names true) :seqs (into {}))
+                             (let [sto-seq (->> (read-sto (str fdir sto) :info :both) :seqs (into {}))
                                    inv-seqs (->> (read-clj (str fdir invseq)) (into {}))]
                                (vec (cons sto 
                                           (for [[nm s] sto-seq] 
@@ -1097,7 +1096,7 @@
 
 ;;;for finding the bpdistance
 (let [fun-sto (fn [sto distfun]
-                (let [{l :seqs cons :cons} (read-sto sto :with-names true)
+                (let [{l :seqs cons :cons} (read-sto sto :info :both)
                       cons (change-parens (first cons))
                       altname sto]
                   [altname ;return [filename data]

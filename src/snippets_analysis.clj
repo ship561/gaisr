@@ -4,15 +4,18 @@
             [clojure.set :as sets]
             [edu.bc.fs :as fs]
             [clojure.core.reducers :as r]
-            [clojure.pprint :as pp])
+            [clojure.pprint :as pp]
+            [incanter.charts :as charts])
   (:use robustness
         refold
         edu.bc.utils
         edu.bc.utils.probs-stats
         edu.bc.utils.snippets-math
+        edu.bc.bio.sequtils.files
         [edu.bc.bio.sequtils.snippets-files
          :only (read-sto change-parens sto->randsto read-clj)]
-        edu.bc.utils.fold-ops))
+        edu.bc.utils.fold-ops
+        [incanter.core :only (view)]))
 
 (def ^{:private true} homedir (fs/homedir))
 
@@ -213,6 +216,48 @@
            (info-content-wt-neighbor (fs/basename sto) seqnm wt neighbors st cons-keys n)
            )))))
 
+(defn rmdb-shape-reactivity
+  "quick function to read in rdat data file from RMDB for SHAPE
+  reactivity. Tries to parse the file into a map that contains the
+  keys :seq :structure and the mutation data as :A1G"
+  
+  []
+  (let [rdat (->> (io/read-lines "/home/kitia/Downloads/ADDRSW_SHP_0002.rdat")
+                  (map #(-> (str/split #" " 2 %) vec) );split heading from data
+                  (remove #(every? empty? %)  );remove empty lines
+                  (into {} ))
+        ikeys (->> (keys rdat)
+                   (filter #(re-find #"ANNOTATION_DATA" %));just annotation data
+                   (map #(re-find #"\d+" %) ))];ith annotation data
+    (-> (reduce (fn [m i]
+                  (assoc m
+                    (->> (rdat (str "ANNOTATION_DATA:" i))
+                         (str/split #"\:") last ;get mut name
+                         keyword);key
+                    (->> (rdat (str "REACTIVITY:" i))
+                         (str/split #" ")
+                         (map read-string))));string to list of double
+                {} ikeys)
+        (assoc 
+            :seq (rdat "SEQUENCE")
+            :structure (rdat "STRUCTURE")))))
+
+(def ^{:doc "parse out the function and designation of an RNA from the
+    sto file. Typically only used in to parse the Rfam seed alignment
+    file. "}
+
+  parse-sto-function
+    (reduce (fn [m sto]
+              (let [gc-lines (first (join-sto-fasta-lines sto ""))
+                    get-comment (fn [re] (->> gc-lines
+                                             (map #(-> (re-find re %) last) )
+                                             (remove empty?)
+                                             first))
+                    tp (->> (get-comment #"GF TP\s*(.*)") (str/split #" ") set)
+                    de (get-comment #"GF DE\s*(.*)")]
+                (assoc m (fs/basename sto) {:name de :type tp})))
+            {}
+            (fs/directory-files (str homedir "/bin/gaisr/trainset3/pos") "seed.sto")))
 (comment
   
   (let [[remaining-file & remaining-files]
@@ -247,7 +292,7 @@
             (doseq [li line
                     l li]
               (println (str/join "," (flatten l)))) ;prints results
-            (println "")))))) ;end line properly
+            (println ""))))))                       ;end line properly
 
   
 
@@ -255,10 +300,10 @@
   ;;count the number of seqs which are robust and are not robust. the
   ;;foo in this case is (read-clj "../robustness/subopt-robustness0.clj")
   (->> (map (fn [[nm m]]
-          (let [robust? (m :neutrality)
-                ntrue (count (filter true? robust?))
-                nfalse (count (filter false? robust?))]
-            [ntrue nfalse]))
+              (let [robust? (m :neutrality)
+                    ntrue (count (filter true? robust?))
+                    nfalse (count (filter false? robust?))]
+                [ntrue nfalse]))
             foo)
        transpose
        (map sum) )
@@ -286,7 +331,7 @@
     < 0.01. Also check the GC-content to give some correlation."
     
     [sto]
-    (let [;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00167-seed.10.sto"
+    (let [ ;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00167-seed.10.sto"
           invsto (str (str/butlast 3 sto) "inv.clj")
           n 1
           foo (->> (map (fn [[nm wtseq]]
@@ -308,4 +353,85 @@
            :jsd (mean jsd)
            :pearsonCC (pearson-correlation gc jsd))
       foo))
+
+;;;read in shape ractivitiy data and try to set up table pos vs eSDC
+  (let [rdat (rmdb-shape-reactivity)
+        wt (rdat :WT)
+        len (count (rdat :seq))
+        rdat (dissoc rdat :WT :seq :structure)]
+    (->> (for [[mut reactivity] rdat]
+           [mut 
+            (* (- 1 (pearson-correlation reactivity wt))
+               (Math/sqrt len))])
+         (map (fn [[k v]]
+                [(->> (str/as-str k) 
+                      (re-find #"\d+" ) 
+                      read-string)
+                 v]))))
+
+  (defn neut-data->list
+    "reads in a clj file and then creates a list of the neutrality values"
+    
+    [in-data]
+    (mapcat #(->> % second :raw) (sto-neutrality (read-clj in-data))))
+
+  (defn neut-data->csv
+    "takes a list of files, a list of labels and an outifle. Takes the
+    neutrality data from the clj file and turns itinto a list and
+    attaches labels for printing to outfile in csv format. There are
+    no headers in this, so it should be manually added."
+
+    [infiles labels outfile]
+    (let [data (map #(vector %2 (neut-data->list %1)) infiles labels)]
+      (io/with-out-writer outfile
+        (doseq [[lab vs] data
+                v vs]
+          (println (str v "," lab))))))
+
+  (let [pos "/home/kitia/bin/gaisr/robustness/compare-bpdist/overlap.clj"
+        neg5 "/home/kitia/bin/gaisr/robustness/compare-bpdist/overlap-5neg.clj"
+        neg3 "/home/kitia/bin/gaisr/robustness/compare-bpdist/overlap-3neg.clj"
+        vs (fn [f] (->> (map (fn [[nm m]]
+                              [(re-find #"RF\d+\-seed" (fs/basename nm)) (get m :raw)])
+                            (sto-neutrality (read-clj f)))
+                       (into {} )))
+        pneuts (vs pos)
+        nneuts5 (vs neg5)
+        nneuts3 (vs neg3)]
+    (reduce (fn [V k] 
+              (let [poss (get pneuts k)
+                    negs (get nneuts3 k)
+                    _ (prn k)]
+                (if-not (nil? negs)
+                  [(concat (first V) poss) 
+                   (concat (second V) negs)]
+                  V)))
+            [[][]] (keys pneuts)))
+
+  (defn alignment-quality
+    "find the alignment quality for the negative training
+    examples. returns the fraction of base-pairs to the entire
+    sequence and the mean number of contiguous bases in the alignment"
+
+    [f]
+    (let [{st :cons seqs :seqs} (read-sto f)
+          st (first st)
+          ;_ (prn f (count (re-seq #"[<|\(]" st)))
+          bp-len (double (/ (count (re-seq #"[<|\(]" st))
+                            (count st)))
+          mean-base-length (mean 
+                            (mapcat (fn [s] 
+                                      (->> (re-seq #"[ACGU]*" s)
+                                           (remove empty? )
+                                           (map count )))
+                                    seqs))]
+      [bp-len mean-base-length]))
+
+  ;;;separate neutrality data based on the function of the RNA
+  (io/with-out-writer "/home/kitia/bin/gaisr/robustness/compare-bpdist/neutrality-by-function.csv"
+    (println "function,neutrality")
+    (let [foo (group-by #(->> % first parse-sto-function :type ) data)]
+      (doseq [k (keys foo)
+              e (flatten (map second (foo k)))]
+        (println (str "," e (doseq [de k] (print de)))))))
   )
