@@ -300,10 +300,10 @@
   ;;count the number of seqs which are robust and are not robust. the
   ;;foo in this case is (read-clj "../robustness/subopt-robustness0.clj")
   (->> (map (fn [[nm m]]
-              (let [robust? (m :neutrality)
-                    ntrue (count (filter true? robust?))
-                    nfalse (count (filter false? robust?))]
-                [ntrue nfalse]))
+          (let [robust? (m :neutrality)
+                ntrue (count (filter true? robust?))
+                nfalse (count (filter false? robust?))]
+            [ntrue nfalse]))
             foo)
        transpose
        (map sum) )
@@ -331,7 +331,7 @@
     < 0.01. Also check the GC-content to give some correlation."
     
     [sto]
-    (let [ ;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00167-seed.10.sto"
+    (let [;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00167-seed.10.sto"
           invsto (str (str/butlast 3 sto) "inv.clj")
           n 1
           foo (->> (map (fn [[nm wtseq]]
@@ -434,4 +434,63 @@
       (doseq [k (keys foo)
               e (flatten (map second (foo k)))]
         (println (str "," e (doseq [de k] (print de)))))))
+
+  ;;;separate robustness from previous runs according to gene function
+  (let [d (map (fn [[nm m]]
+                 (let [nm (-> (re-find #"RF\d+-seed" (str/as-str nm))
+                              (str ".sto"))
+                       neuts (map #(vector (% :wt) (% :mut)) (m :robust?))]
+                   [nm neuts]))
+               (read-clj "/home/kitia/bin/gaisr/robustness/subopt-robustness0.clj"))
+        foo (group-by #(->> % first parse-sto-function :type ) d)]
+    (io/with-out-writer "/home/kitia/bin/gaisr/robustness/compare-bpdist/robust-by-function.csv"
+      (println "function,wt neut,invfold neut,name")
+      (doseq [k (remove nil? (keys foo))
+              [nm e] (foo k)
+              pairs e]
+        (println (str "," (str/join "," pairs) "," (get-in parse-sto-function [nm :name]) (doseq [de k] (print de)))))))
+
+  (defn rand-step
+
+    "Takes a sequence s and a basepair matrix bp-map and simulates 1
+    mutation which will either be a 1 mutant neighbor or if the
+    mutation occurs in a base pair region, will be a 2 mutant neighbor
+    where the second mutation is a complementary mutation. If only s
+    is provided, then all mutations can only result in a 1-mutant
+    neighbor.
+
+    The complementary mutations for G are U and C (with equal
+    probability) and for U are A and G (with equal probability)."
+    
+    ([s] (rand-step s []))
+
+    ([s bp-map]
+       (let [i (rand-int (count s))
+             rand-base (->> (str/get s i) ;char at i
+                            (dissoc {\A 1 \C 1 \G 1 \U 1})
+                            keys
+                            rand-nth);pick base randomly. can't pick self
+             comp-location (-> bp-map keys ((fn [x] (into {} x))) (get i))
+             replace-char-at (fn [s replacement i]
+                               (str (subs s 0 i) replacement (subs s (inc i))))
+             comp-base (fn [b]
+                         (-> {\A [\U], \U [\A \G], \G [\C \U], \C [\G]}
+                             (get b) rand-nth))]
+         (if comp-location ;i is in stem
+           (-> (replace-char-at s rand-base i) ;change i
+               (replace-char-at (comp-base rand-base) comp-location));complement mutation
+           (replace-char-at s rand-base i)))))
+  
+  (defn simulate-drift
+    "Takes a sequence s and will attempt 4L mutations to the
+    sequence. It is a first order markov process. Only mutations which
+    maintain the structure are accepted."
+    
+    [s target]
+    (let [target-keys (struct->matrix target)
+          accept? (fn [s2] (= target (fold s2)))]
+      (->> (iterate #(let [mstep (rand-step % target-keys)] ;markov step
+                       (if (accept? mstep) mstep %)) s);then take step
+           (take (* 4 (count s)))
+           last)))
   )
