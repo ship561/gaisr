@@ -60,10 +60,13 @@
 ;;;-----------------------------------------------------------------------------
 
 (defn bpsomething
-  "uses the <1-d/L> method mentioned in Borenstein miRNA paper."
+  "uses the <1-d/L> method mentioned in Borenstein miRNA
+  paper. Distance measured from given structure"
   
-  [s st & {:keys [bp]}]
-  (let [neighbors (mutant-neighbor s)
+  [s st & {:keys [bp]
+           :or {bp true}}]
+  (let [[s st cons-keys] (degap-conskeys s st)
+        neighbors (mutant-neighbor s)
         len (count st)
         dist (fn [neighbor]
                (- 1 (/ (bpdist st (fold neighbor) :bpdist bp)
@@ -75,8 +78,10 @@
   structure to the mutant structure to find the disruption to the
   structure. Returns a value bounded by [0 1]."
 
-  [s st]
-  (let [n 10000
+  [s st & {:keys [ncore]
+           :or {ncore 1}}]
+  (let [[s st cons-keys] (degap-conskeys s st)
+        n 10000
         stvec (map #(if (= \. %) 0 1) (seq st))
         neighbors (mutant-neighbor s)
         dist (fn [neighbor]
@@ -85,7 +90,25 @@
                    (- 1 (* 0.5
                            (- 1 (pearson-correlation stvec mutst))))
                    0)))]
-    (mean (pxmap dist 1 neighbors))))
+    (mean (pxmap dist ncore neighbors))))
+
+(defn generic-dist-sto
+  "Takes a sto, distance function and optional args. Uses the distance
+  function to find the mean distance of the sequences in the sto to
+  their 1-mutant neighbors, respectively. "
+
+  [sto distfun & {:keys [ncore nsubopt altname bp]
+                  :or {ncore 6, nsubopt 1000,
+                       altname sto, bp true}}]
+  (let [{l :seqs cons :cons} (read-sto sto :info :both)
+        cons (change-parens (first cons))]
+    [altname                          ;return [filename data]
+     (doall
+      ;;go over each seq in the alignment
+      (map (fn [[nm s]]
+             (apply distfun s cons
+                    [:ncore ncore :nsubopt nsubopt :bp bp]))
+           l))]))
 
 ;;;-----------------------------------------------------------------------------
 ;;;
@@ -129,15 +152,17 @@
   average is subopt overlap"
 
   [s cons-keys n]
-  (let [[_ substruct] (suboptimals s n :centroid-only false)]
+  (let [[_ substruct] (suboptimals s n :centroid-only false)
+        dist (fn [st1 st2]
+               (/ (count (sets/intersection st1
+                                            (set (keys st2))))
+                  (count st1)))]
     ;;takes percent overlap and
     ;;reduces it to a freqmap to
     ;;save memeory
     (frequencies (map (fn [ks]
                         ;;percent overlap
-                        (/ (count (sets/intersection cons-keys
-                                                     (set (keys ks))))
-                           (count cons-keys)))
+                        (dist cons-keys ks));dist(s,t)
                       substruct))))
 
 (defn subopt-overlap-neighbors
@@ -152,11 +177,14 @@
            :or {ncore 2 nsubopt 1000}}]
   (let [[s st cons-keys] (degap-conskeys s st)
         neighbors (mutant-neighbor s)] ;1-mut neighbors
-    (pxmap (fn [neighbor]
-             ;;a freqmap of % overlap for each neighbor
-             (subopt-overlap-seq neighbor cons-keys nsubopt))
-           ncore
-           (concat (list s) neighbors)))) ;first element is WT rest are mut neighbors
+    (->> (pxmap (fn [neighbor]
+                  ;;a freqmap of % overlap for each neighbor
+                  (subopt-overlap-seq neighbor cons-keys nsubopt))
+                ncore
+                (concat (list s)
+                        neighbors)) ;first element is WT rest are mut neighbors
+         (apply merge-with +)
+         mean))) 
 
 (defn subopt-overlap-sto
   "This is the main function in the robustness namespace.
@@ -181,7 +209,7 @@
              ;;finds 1000 suboptimal structures and
              ;;finds the percent overlap of
              ;;suboptimal structures to the cons struct
-             (doall (subopt-overlap-neighbors s cons
+             (mean (subopt-overlap-neighbors s cons
                                               :nsubopt nsubopt
                                               :ncore (inc ncore))));ncore
            l))] ;l=list of seqs in the sto
@@ -205,10 +233,10 @@
   [sto]
   (let [{sqs :seqs cons :cons} (read-sto sto :info :both)
         cons (change-parens (first cons))
-        valid? (fn [st] (pos? (count (struct->matrix st))))]
+        valid? (fn [st] (pos? (count st)))]
     (every? true? (map (fn [[_ s]]
-                         (let [[_ st] (remove-gaps s cons)]
-                           (valid? st)))
+                         (let [[_ st cons-keys] (degap-conskeys s cons)]
+                           (valid? cons-keys)))
                        sqs))))
 
 (defn subopt-significance
@@ -334,9 +362,6 @@
                            :raw neut})))
           {} x))
 
-(defn combine-neighbors [list-maps]
-  (mean (apply merge-with + list-maps)))
-
 (defn avg-overlap
   "Takes a map of percent overlaps where it is organized in [k v]
    pairs. k=file name and v=list of lists of frequency maps of percent
@@ -457,19 +482,25 @@
                              :default nil]
                             ["-o" "--outfile" "file to write to" :default nil]
                             ["-di" "--dir" "dir in which files are located"
-                             :default (str homedir "/bin/gaisr/trainset2/pos/")]
+                             :default nil]
+                            ["-dfn" "--distfn" "distance function" :parse-fn #(->> % symbol (ns-resolve 'robustness))
+                             :default subopt-overlap-neighbors]
                             ["-nc" "--ncore" "number cores to use" :parse-fn #(Integer/parseInt %) :default 6]
-                            ["-d" "--debug" "debug using (take 3 (filter #(re-seq #\"RF00555-seed\" %) fsto))"
+                            ["-d" "--debug" "debug test"
                              :default nil :flag true]
                             ["-h" "--help" "usage" :default nil :flag true])
-        fdir (opts :dir) 
-        fsto (or (map #(str fdir "/"  %) (opts :file))
-                 (fs/directory-files fdir ".sto"))
+        _ (prn opts)
+        fdir (opts :dir)
+        fsto (if fdir
+               (map #(fs/join fdir  %) (opts :file))
+               (opts :file))
         stos (if (opts :debug)
-               (take 3 (filter #(re-seq #"RF00555-seed" %) fsto))
+               (take 1 (fs/re-directory-files (opts :dir) #"RF00555-seed*sto"))
                fsto)
         neutrality (for [sto stos] ;loop over stos
-                     (subopt-overlap-sto sto :ncore (opts :ncore)))]
+                                        ;(subopt-overlap-sto sto :ncore (opts :ncore))
+                     (generic-dist-sto sto (opts :distfn))
+                     )]
     (cond
      (or (nil? args) (opts :help)) (print usage) ;usage help
      (not (nil? (opts :outfile))) (io/with-out-writer (opts :outfile)
@@ -1119,21 +1150,19 @@
                                         :default nil]
                                        ["-D" "--distfn" "distance function to use" :default bpsomething]
                                        ["-o" "--outfile" "file to write to" :default nil]
-                                       ["-di" "--dir" "dir in which files are located" :default (str homedir "/bin/gaisr/trainset2/")]
-                                       ["-nc" "--ncore" "number cores to use" :parse-fn #(Integer/parseInt %) :default 6]
-                                       ["-d" "--debug" "debug using (take 3 (filter #(re-seq #\"RF00555-seed\" %) fsto))"
-                                        :default nil :flag true]
+                                       ["-di" "--dir" "dir in which files are located" 
+                                        :default nil]
+                                       ["-nc" "--ncore" "number cores to use" 
+                                        :parse-fn #(Integer/parseInt %) :default 6]
                                        ["-h" "--help" "usage" :default nil :flag true])
-                   fdir (opts :dir) 
-                   fsto (or (map #(str fdir "/"  %) (opts :file))
-                            (fs/directory-files fdir ".sto"))
-                   stos (if (opts :debug)
-                          (take 3 (filter #(re-seq #"RF00555-seed" %) fsto))
-                          fsto)
+                   stos (if (opts :dir)
+                          (map #(fs/join (opts :dir) %) (opts :file))
+                          (opts :file))
                    neutrality (pxmap (fn [sto] ;loop over stos
                                        (prn :workingon (fs/basename sto))
-                                       (fun-sto sto (opts :distfn)))
-                                     10
+                                       #_(fun-sto sto (opts :distfn))
+                                       (generic-dist-sto sto (opts :distfn)))
+                                     20
                                      stos)]
                (cond
                 (or (nil? args) (opts :help)) (print usage) ;usage help
@@ -1142,11 +1171,17 @@
                 :else
                 (doall neutrality))))
       ]
-  (main "-f" (->> (fs/directory-files "/home/peis/bin/gaisr/trainset3/pos" "-NC.sto")
-                  (map fs/basename)
+  (main "-f" (->> (fs/directory-files "/home/peis/bin/gaisr/trainset3/neg/5prime/" ".sto")
+                  (filter #(> (-> % snippets-analysis/alignment-quality first) 0.05) )
                   (str/join " " ))
-        "--dir" "/home/peis/bin/gaisr/trainset3/pos/"
-        "-D" #(bpsomething %1 %2 :bp true))
+        "-D" #(bpsomething %1 %2 :bp true)))
+
+(snippets-analysis/with-out-appender "/home/peis/bin/gaisr/robustness/compare-neutrality/neutrality-distribution-trainset3.csv" 
+              (doseq [[fnm vs] @bpdist-3prime-neg2
+                      v vs
+                      :let [sto (fs/basename fnm)
+                            {nm :name type :type} (snippets-analysis/parse-sto-function (str (re-find #"RF\d+\-seed" sto) ".sto"))]]
+                (println (str sto "," v ",bpdist-3prime-neg2," nm "," (apply str type)))))
 
   #_(main "-f" (->> (fs/directory-files "/home/peis/bin/gaisr/trainset3/neg/3prime/" ".sto")
                     (filter valid-seq-struct )

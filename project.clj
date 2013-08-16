@@ -14,7 +14,8 @@
 
                  [robert/bruce "0.7.1"] ; retries with decays, etc.
                  [slingshot "0.10.3"]   ; enhanced exceptions
-                 [mlabs.jars/clojure-csv "1.3.0-mlab"]
+                 ;;[mlabs.jars/clojure-csv "1.3.0-mlab"]
+                 [clojure-csv/clojure-csv "2.0.1"]
                  [clj-shell "0.1.0"]
 
                  ;;command line options
@@ -23,7 +24,7 @@
                  ;;[org.clojure.contrib/macro-utils "1.3.0-alpha4"]
                  [org.clojure/tools.macro "0.1.1"]
                  
-                 ;;[clj-native "0.9.1-SNAPSHOT"]
+                 ;;[clj-native "0.9.3"]
                  ;;[net.java.dev.jna/jna "3.4.0"]
                  ;;[org.clojars.nathell/clojure-jna "1.0.0-SNAPSHOT"]
 

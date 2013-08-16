@@ -21,7 +21,8 @@
        (str/replace-re #"\:|\-" "." ))) ;replace gaps
 
 (defn read-sto
-  "read stockholm file creates a map where the key=name val=sequence"
+  "read stockholm file creates a map where the key=name
+  val=sequence. the keys are :seqs :cons :file :cov"
   
   [f & {:keys [info] 
         :or {info :data}}]

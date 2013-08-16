@@ -5,7 +5,8 @@
             [edu.bc.fs :as fs]
             [clojure.core.reducers :as r]
             [clojure.pprint :as pp]
-            [incanter.charts :as charts])
+            [incanter.charts :as charts]
+            [clojure-csv.core :as csv])
   (:use robustness
         refold
         edu.bc.utils
@@ -32,6 +33,18 @@
                (do (.close rdr) nil))))]
     (helper (clojure.java.io/reader file))))
 
+(defmacro print-proper
+    "Do body in the repl normally. if a file f and body is provided, then
+    it will do the body to the file."
+    
+    ([body] body)
+    ([f body]
+       `(with-open [w# (clojure.java.io/writer ~f)]
+          (binding [*out* w#]
+            ~body))))
+
+(defmacro unless [pred a b]
+  `(if (not ~pred) ~a ~b))
 
 (defn GC-content [s]
   (let [pr (probs 1 s)]
@@ -244,7 +257,7 @@
 
 (def ^{:doc "parse out the function and designation of an RNA from the
     sto file. Typically only used in to parse the Rfam seed alignment
-    file. "}
+    file. Returns a map for quick lookup"}
 
   parse-sto-function
     (reduce (fn [m sto]
@@ -258,6 +271,90 @@
                 (assoc m (fs/basename sto) {:name de :type tp})))
             {}
             (fs/directory-files (str homedir "/bin/gaisr/trainset3/pos") "seed.sto")))
+
+(defn markov-step
+  "probs are a map with state and probability of occuring {:A 0.1 :H
+  0.5 :T 0.2 :X 0.2}"
+  
+  [probs]
+  (let [cum-probs (reductions + (vals probs))
+        prob-table (map vector cum-probs (keys probs))
+        r (rand)
+        step (->> prob-table
+                  (drop-while #(>= r (first %)))
+                  first
+                  second)]
+    #_(prn prob-table) step))
+
+(defn generate-rand-seq
+
+  ([L]
+     (apply str (repeatedly L #(rand-nth [\A \C \G \U]))))
+
+  ([L base-probs]
+     (apply str (repeatedly L #(markov-step base-probs)))))
+
+  (defn plasticity [s]
+    (/ (* 2 (fold2 s {:foldmethod :RNAfoldp}) )
+       (count s)))
+
+(defn perfect-struct?
+    "takes a seq and compares it to the target."
+
+    [s target]
+    (= (fold s) target))
+
+(defn rand-mutation
+
+    "Takes a sequence s and a basepair matrix bp-map and simulates 1
+    mutation which will either be a 1 mutant neighbor or if the
+    mutation occurs in a base pair region, will be a 2 mutant neighbor
+    where the second mutation is a complementary mutation. If only s
+    is provided, then all mutations can only result in a 1-mutant
+    neighbor.
+
+    The complementary mutations for G are U and C (with equal
+    probability) and for U are A and G (with equal probability)."
+    
+    ([s] (rand-mutation s []))
+
+    ([s bp-map]
+       (let [i (rand-int (count s))
+             rand-base (->> (str/get s i) ;char at i
+                            (dissoc {\A 1 \C 1 \G 1 \U 1})
+                            keys
+                            rand-nth);pick base randomly. can't pick self
+             comp-location (-> bp-map keys ((fn [x] (into {} x))) (get i))
+             replace-char-at (fn [s replacement i]
+                               (str (subs s 0 i) replacement (subs s (inc i))))
+             comp-base (fn [b]
+                         (-> {\A [\U], \U [\A \G], \G [\C \U], \C [\G]}
+                             (get b) rand-nth))]
+         (if comp-location ;i is in stem
+           (-> (replace-char-at s rand-base i) ;change i
+               (replace-char-at (comp-base rand-base) comp-location));complement mutation
+           (replace-char-at s rand-base i)))))
+
+(defn simulate-drift
+    "Takes a sequence s and will attempt 4L mutations to the
+    sequence. It is a first order markov process. Only mutations which
+    maintain the structure are accepted. if a target structure is
+    provided, then mutations in stems will also have compensatory
+    mutations."
+    
+    ([s] (simulate-drift s (fold s) (fn [x] (rand-mutation x))))
+    ([s target]
+       (let [target-keys (struct->matrix target)]
+         (simulate-drift s target (fn [x] (rand-mutation x target-keys)))))
+    ([s target stepfn]
+       (let [accept? (fn [s2] (= target (fold s2)))]
+         (->> (iterate #(let [mstep (stepfn %)] ;markov step
+                          (if (accept? mstep) mstep %)) s);then take step
+              (take (* 4 (count s)))
+              last)) ))
+
+
+
 (comment
   
   (let [[remaining-file & remaining-files]
@@ -450,47 +547,119 @@
               pairs e]
         (println (str "," (str/join "," pairs) "," (get-in parse-sto-function [nm :name]) (doseq [de k] (print de)))))))
 
-  (defn rand-step
-
-    "Takes a sequence s and a basepair matrix bp-map and simulates 1
-    mutation which will either be a 1 mutant neighbor or if the
-    mutation occurs in a base pair region, will be a 2 mutant neighbor
-    where the second mutation is a complementary mutation. If only s
-    is provided, then all mutations can only result in a 1-mutant
-    neighbor.
-
-    The complementary mutations for G are U and C (with equal
-    probability) and for U are A and G (with equal probability)."
-    
-    ([s] (rand-step s []))
-
-    ([s bp-map]
-       (let [i (rand-int (count s))
-             rand-base (->> (str/get s i) ;char at i
-                            (dissoc {\A 1 \C 1 \G 1 \U 1})
-                            keys
-                            rand-nth);pick base randomly. can't pick self
-             comp-location (-> bp-map keys ((fn [x] (into {} x))) (get i))
-             replace-char-at (fn [s replacement i]
-                               (str (subs s 0 i) replacement (subs s (inc i))))
-             comp-base (fn [b]
-                         (-> {\A [\U], \U [\A \G], \G [\C \U], \C [\G]}
-                             (get b) rand-nth))]
-         (if comp-location ;i is in stem
-           (-> (replace-char-at s rand-base i) ;change i
-               (replace-char-at (comp-base rand-base) comp-location));complement mutation
-           (replace-char-at s rand-base i)))))
   
-  (defn simulate-drift
-    "Takes a sequence s and will attempt 4L mutations to the
-    sequence. It is a first order markov process. Only mutations which
-    maintain the structure are accepted."
+  
+  
+
+  (defn parse-dotps
+    "gets base pair probabilities from a dot.ps file f. the string is 1 based. "
     
-    [s target]
-    (let [target-keys (struct->matrix target)
-          accept? (fn [s2] (= target (fold s2)))]
-      (->> (iterate #(let [mstep (rand-step % target-keys)] ;markov step
-                       (if (accept? mstep) mstep %)) s);then take step
-           (take (* 4 (count s)))
-           last)))
+    [f]
+    (->> (io/read-lines "/home/kitia/dot.ps") 
+         (drop-until #(re-find #"%data starts here" %) )
+         rest
+         (take-while #(re-find #"ubox" %))
+         (map (fn [x]
+                (let [[i j sqrt-prob _] (str/split #" " x)]
+                  [[(Integer/parseInt i) (Integer/parseInt j)]
+                   (sqr (Double/parseDouble sqrt-prob))])))))
+
+  
+
+  (defn rankscore [i coll]
+    (let [r (-> (remove #(> i %) coll)
+                count inc)
+          N (count coll)]
+      (/ r
+         (inc N))))
+
+  
+;;;find plasticity of current invfold trainset2
+  (doall 
+   (mapcat (fn [f]  
+             (let [{inseqs :seqs st :cons} (read-sto f :info :both)
+                   invseqs (read-clj (fs/replace-type f ".inv.clj"))
+                   _ (prn :f f)]
+               (mapcat (fn [[nm s]]
+                         (let [[s st] (degap-conskeys s (first st))
+                               _ (prn :nm nm)]
+                           (->> (invfold/filter-similar-seq s (invseqs nm) 0.01);similar base comp
+                                (filter #(perfect-struct? % st));same structure
+                                (mapcat (fn [x] (repeatedly 10 #(simulate-drift x st))))
+                                (map plasticity )
+                                doall)))
+                       inseqs)))
+           ;;only stos which have inv seqs as well
+           (->> (fs/directory-files "/home/kitia/bin/gaisr/trainset2/pos/" "7.sto")
+                (filter #(fs/exists? (fs/replace-type % ".inv.clj")) )
+                )))
+
+  ;;;mean pairwise identity b/w all of the invfold seqs for a given WT seq
+  (pxmap #(reduce (fn [m [k vs]]
+                    (let [pwi (for [i vs 
+                                    j vs] 
+                                (double (/ (levenshtein i j)
+                                           (count i))))]
+                      (assoc m k [(mean pwi) (sd pwi)])))
+                  {} (read-clj %))
+         2 (fs/directory-files "/home/kitia/bin/gaisr/trainset2/pos/" "7.inv.clj"))
+
+  ;;;mean pwi b/w optimize walk null seqs for RF00514
+  (let [{seqs :seqs struct :cons} 
+        (read-sto "/home/kitia/bin/gaisr/trainset2/pos/RF00514-seed.1.sto")
+        struct (-> struct first change-parens)
+        s (first seqs)
+        [s st] (degap-conskeys s struct)
+        iseq ["GCGAAAAGGGCGCGAACGGCCAAAAAAAAGGCCGACGCGACCCGGGGGCGCAAAAAAAAGCGCCCCCCGCAAAAACUACGGAAAGGGGUGGUGCGGCGGCAAAAAGCCGCCGCACCACCCCAAA" 
+              "GGCAAAAGCGGCGCAAGGCGCAAAAAAAAGCGCCAGCGCACGCGACGGGGCAAAAAAAAGCCCCGUCGCCAAAAACUACGGAAAGCGCCGGGCGCGCGGGAAAAACCUGCGCGCCCGGCGCAAA"
+              "GGCAAAAGGCGGGGAACGACGAAAAAAAACGUUGACCCCAGCCGGGCCGGGAAAAAAAACCCGGCCCGCCAAAAACUACGGAAAGCGGCGGGGGGCGCGCAAAAAGCGCGCUCCCCGCCGCAAA"]]
+    (doall (for [i iseq]
+             (map #(vector (double (/ (levenshtein i %) 
+                                      (count i)))
+                           i %)
+                  (->> (repeatedly #(simulate-drift i (fold i)))
+                       distinct 
+                       (take 10))))))
+
+  ;;;subsequent analysis for previous code
+  (let [iseqs (map third (apply concat foo))]
+    (remove zero? ;diagonal vals
+            (for [i iseqs
+                  j iseqs] 
+              (double (/ (levenshtein i j) (count i))))))
+
+  
+  ;;;simulate drift starting from a seed sequence
+  (let [files (fs/directory-files "/home/peis/bin/gaisr/trainset3/pos/" "-NC.sto")] 
+    (doseq [f files
+            :when (fs/exists? (fs/replace-type f ".inv.clj"))
+            :let [seqs (read-seqs f :info :name)
+                  iseqs (read-clj (fs/replace-type f ".inv.clj"))
+                  outfile (fs/replace-type f ".walk.clj")
+                  mseqs (if (fs/exists? outfile)
+                          (read-clj outfile)
+                          {})]]
+      (prn :f f)
+      (io/with-out-writer outfile
+        (->> (pxmap (fn [nm] 
+                      [nm
+                       (vec 
+                        (apply concat
+                               (for [invseq (iseqs nm)
+                                     :when (not (nil? invseq)) 
+                                     :let [ist (fold invseq)]]
+                                 ;;must maintain MFE struct of the invseq
+                                 (->> (repeatedly #(simulate-drift invseq ist))
+                                      distinct
+                                      (take 10)))))]
+                      )
+                    60 seqs)
+             (remove #(-> % second empty?) ) ;no invseq for given seq
+             vec
+             (into {})
+             (merge-with #(-> (concat %1 %2) distinct vec) mseqs)
+             pp/pprint)))) ;merge with existing
+
+
+  
   )

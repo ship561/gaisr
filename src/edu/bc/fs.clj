@@ -222,7 +222,7 @@ if it is not or if the file cannot be deleted."
        (filter #(re-find pat %) (listdir directory))))
 
 (defn- fix-file-regex [l]
-  (-> l str/trim (str "$") ((partial str/replace-re #"\*" ".*"))))
+  (->> l str/trim (str/replace-re #"\*" ".*")))
 
 (defn re-directory-files
   "Return full path qualified file specifications for all files in
