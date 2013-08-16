@@ -264,7 +264,7 @@
 
 ;;; Cool stuff from Shermin, but requires much more refactoring of
 ;;; various other things of his to make it all work. See his fold-ops.
-(defn print-sto
+#_(defn print-sto
   "takes sequence lines and a structure line and writes it into a sto
   format file. the seq-lines needs to be a collection of [name
   sequence] pairs. structure is a string. Simply prints out to the

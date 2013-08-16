@@ -66,20 +66,26 @@
 
 (defn -main [& args]
   (let [[opts _ usage] (cli args
+                            ["-f" "--file" "file(s) to check neutrality for"
+                             :parse-fn #(str/split % #" ") ;create list of files
+                             :default nil]
                             ["-o" "--outfile" "file to write to"
                              :default (str (fs/homedir) "/bin/gaisr/robustness/rnamute-data.clj")]
                             ["-di" "--dir" "dir in which files are located"
-                             :default (str (fs/homedir) "/bin/gaisr/trainset2/")]
+                             :default nil]
                             )
-        fdir (opts :dir)
-        files (fs/re-directory-files fdir #"\.\d\.sto$")
+        files (if (opts :dir)
+                (map #(fs/join (opts :dir) %) (opts :file))
+                (opts :file))
         results (->> (map #(do (prn %)
                                (RNAmute-dist %)) files)
                      (apply concat)
                      vec)]
     (io/with-out-writer (opts :outfile)
-      (println ";;;data for rnamute program running it on all seqs in trainset2/pos with re=\".\\d.sto$\". returns a vector of vectors of the average distance already normalized using <1-d/L>. Vector format is [dotbracket-dist shapiro-dist].")
-      (prn results))))
+      (println "#data for rnamute program running it on all seqs in trainset2/pos with re=\".\\d.sto$\". returns a vector of vectors of the average distance already normalized using <1-d/L>. Vector format is [dotbracket-dist shapiro-dist].")
+      (doseq [[bpdist shapirodist] results]
+        (print (str bpdist ",bp-distance\n"
+                    shapirodist ",shapiro-dist\n"))))))
 
 
 (test/deftest- footest

@@ -104,7 +104,7 @@
     (->> (map (fn [ss]
                 (let [tmp1 (fs/tempfile)
                       tmp2 (fs/tempfile)]
-                  (io/with-out-writer tmp1 (toaln ss)) ;subset aln
+                  (io/with-out-writer tmp1 (print-aln ss)) ;subset aln
                   (aln->sto tmp1 tmp2) ;subset sto
                   (fs/rm tmp1)
                   (if (valid-seq-sto? tmp2)
@@ -172,7 +172,7 @@
                 (map #(-> % second last)  )
                 first
                 change-parens)
-        [outst & outseqs] (-> (randseqs seq-lines n)
+        [outst & outseqs] (-> (randnseqs seq-lines n)
                               (degap-aln st))]
     (if outfile
       (io/with-out-writer outfile (print-sto outseqs outst))

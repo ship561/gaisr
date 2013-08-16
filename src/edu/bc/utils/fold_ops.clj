@@ -110,7 +110,7 @@
       [0 map-structures]) ;returns all suboptimal structures
     ))
 
-;(ns-unmap 'edu.bc.utils.fold-ops 'fold2)
+(ns-unmap 'edu.bc.utils.fold-ops 'fold2)
 (defmulti fold2 (fn [s & args]
                   ((or (first args) {}) :foldmethod)))
 
@@ -124,6 +124,22 @@
       second
       (str/split #" ")
       first))
+
+(defmethod fold2 :RNAfoldp [s args]
+  (let [ensemble-div  (->> ((shell/sh "RNAfold"
+                                      "-p"
+                                      "-P" param-file
+                                      
+                                      "--noPS"
+                                      :in s )
+                            :out)
+                           str/split-lines
+                           last
+                           (re-find #"ensemble diversity (\d*.\d*)")
+                           second
+                           Double/parseDouble)]
+    ;;(when (fs/exists? "dot.ps") (do (prn "del dot") (fs/rm "dot.ps")))
+    ensemble-div))
 
 (defmethod fold2 :RNAsubopt [s args] 
   (->> ((shell/sh "RNAsubopt"

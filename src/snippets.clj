@@ -319,9 +319,7 @@
   
   [probs]
   (let [cum-probs (reductions + (vals probs))
-        prob-table (map (fn [p label ]
-                          [p label])
-                        cum-probs (keys probs))
+        prob-table (map vector cum-probs (keys probs))
         r (rand)
         step (->> prob-table
                   (drop-while #(>= r (first %)))
