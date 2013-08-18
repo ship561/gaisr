@@ -1188,7 +1188,7 @@
                     (map fs/basename)
                     (str/join " " ))
           "--dir" "/home/peis/bin/gaisr/trainset3/neg/3prime/"
-          "-D" #(pccsomething %1 %2)))
+          "-D" #(pccsomething %1 %2))
 
 
 (io/with-out-writer "/home/peis/bin/gaisr/robustness/compare-bpdist12.clj"
