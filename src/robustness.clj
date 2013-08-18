@@ -1183,6 +1183,19 @@
                             {nm :name type :type} (snippets-analysis/parse-sto-function (str (re-find #"RF\d+\-seed" sto) ".sto"))]]
                 (println (str sto "," v ",bpdist-3prime-neg2," nm "," (apply str type)))))
 
+  #_(main "-f" (->> (fs/directory-files "/home/peis/bin/gaisr/trainset3/neg/3prime/" ".sto")
+                    (filter valid-seq-struct )
+                    (map fs/basename)
+                    (str/join " " ))
+          "--dir" "/home/peis/bin/gaisr/trainset3/neg/3prime/"
+          "-D" #(pccsomething %1 %2)))
+
+
+(io/with-out-writer "/home/peis/bin/gaisr/robustness/compare-bpdist12.clj"
+              (println ";;;compares the WT structure to the centroid structure of the 1-mut neighbors. turns the structures into a vector of 0's and 1's where 0 is unpaired 1 is paired. Uses the pearsons correlation coefficient to find the similarity between the 2 structures. the equation 1-0.5*(1-pcc) is used to normalize the data to [0 1]. uses pccsomething over the 5' NEGative training set.")
+              (prn (mapv #(vector (fs/basename (first %))
+                                  (vec (second %)))
+                         @bar)))
 )
 
 

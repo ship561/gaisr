@@ -397,10 +397,10 @@
   ;;count the number of seqs which are robust and are not robust. the
   ;;foo in this case is (read-clj "../robustness/subopt-robustness0.clj")
   (->> (map (fn [[nm m]]
-              (let [robust? (m :neutrality)
-                    ntrue (count (filter true? robust?))
-                    nfalse (count (filter false? robust?))]
-                [ntrue nfalse]))
+          (let [robust? (m :neutrality)
+                ntrue (count (filter true? robust?))
+                nfalse (count (filter false? robust?))]
+            [ntrue nfalse]))
             foo)
        transpose
        (map sum) )
@@ -428,7 +428,7 @@
     < 0.01. Also check the GC-content to give some correlation."
     
     [sto]
-    (let [ ;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00167-seed.10.sto"
+    (let [;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00167-seed.10.sto"
           invsto (str (str/butlast 3 sto) "inv.clj")
           n 1
           foo (->> (map (fn [[nm wtseq]]

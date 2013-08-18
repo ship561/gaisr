@@ -211,6 +211,9 @@
   the new sto" []
   (map embl-to-nc (fs/directory-files "/home/peis/bin/gaisr/trainset3/pos" ".sto")))
 
+(def cur-struct-negs
+  '("RF00514-seed-NC-3prime.sto" "RF01055-seed-NC-3prime.sto" "RF01826-seed-NC-3prime.sto" "RF00558-seed-NC-3prime.sto" "RF01070-seed-NC-3prime.sto" "RF01510-seed-NC-3prime.sto" "RF01693-seed-NC-3prime.sto" "RF00559-seed-NC-3prime.sto" "RF01769-seed-NC-3prime.sto" "RF01727-seed-NC-3prime.sto" "RF01385-seed-NC-3prime.sto" "RF01692-seed-NC-3prime.sto" "RF01402-seed-NC-3prime.sto" "RF01482-seed-NC-3prime.sto" "RF01767-seed-NC-3prime.sto" "RF01694-seed-NC-3prime.sto" "RF00506-seed-NC-3prime.sto" "RF00114-seed-NC-3prime.sto" "RF01402-seed-NC-5prime.sto" "RF01482-seed-NC-5prime.sto" "RF01769-seed-NC-5prime.sto" "RF01826-seed-NC-5prime.sto" "RF01727-seed-NC-5prime.sto" "RF01694-seed-NC-5prime.sto" "RF01693-seed-NC-5prime.sto" "RF01510-seed-NC-5prime.sto" "RF01385-seed-NC-5prime.sto"))
+
 (defn trainset3-negs
   "generate trainset negative sto's. Produces the stos in current
   folder. Usually just copy to a new folder for negatives"
