@@ -167,20 +167,20 @@
                      (let [args (first args)]
                        [(type (args :st)) (args :foldmethod)])))
 
-(defmethod aln->sto [String ::RNAalifold] [in-aln out-sto args]
+(defmethod aln->sto [String :RNAalifold] [in-aln out-sto args]
   (let [sq (read-aln in-aln :info :both)]
     (io/with-out-writer out-sto
       (print-sto sq (args :st)))
     out-sto))
 
-(defmethod aln->sto [nil ::RNAalifold] [in-aln out-sto args]
+(defmethod aln->sto [nil :RNAalifold] [in-aln out-sto args]
   (let [st (fold-aln in-aln)
         sq (read-aln in-aln :info :both)]
     (io/with-out-writer out-sto
       (print-sto sq st))
     out-sto))
 
-(defmethod aln->sto [nil ::centroid_alifold] [in-aln out-sto args]
+(defmethod aln->sto [nil :centroid_alifold] [in-aln out-sto args]
   (let [st (fold-aln in-aln {:foldmethod ::centroid_alifold})
         sq (read-aln in-aln :info :both)]
     (io/with-out-writer out-sto
@@ -188,7 +188,7 @@
     out-sto))
 
 (defmethod aln->sto :default [in-aln out-sto]
-  (aln->sto in-aln out-sto {:foldmethod ::RNAalifold}))
+  (aln->sto in-aln out-sto {:foldmethod :RNAalifold}))
 
 (comment 
  (defn aln->sto
@@ -215,23 +215,54 @@
     ;;else use cmfinder
     #_(shell/sh "perl" "/home/kitia/bin/gaisr/src/mod_cmfinder.pl" in-aln out-sto))))
 
+(defn sissiz-wrap [infile n]
+  (let [{out :out err :err} (clojure.java.shell/sh "SISSIz" "--simulate"
+                                                   "-n" (str n)
+                                                   "--rna" infile)]
+    (when-not (empty? err) (throw+ {:infile infile
+                                    :err err
+                                    :msg "SISSIz error"}))
+    out))
+
 (defn sto->randsto
   "takes a sto input file and generates a random sto to specified
   output. Program uses SISSIz to make the random aln. Then the aln is
   converted to sto format by adding a structure line. Structure is
   found by using RNAalifold. Returns the file name of the new sto"
 
-  [insto outsto]
-  (let [fname (str/take (- (count insto) 3) insto)
-        inaln (sto->aln insto (str fname "aln"));convert in-sto to aln
-        outaln (str fname "out")]
-    (io/with-out-writer outaln
-      (print ((shell/sh "SISSIz" "-s" inaln) :out))) ;create random aln
-    (aln->sto outaln outsto)
-    ;;remove temp files
-    (fs/rm inaln)
-    (fs/rm outaln)
-    outsto))
+  ([insto outsto]
+     (let [inaln (sto->aln insto (fs/replace-type insto ".aln"));convert in-sto to aln
+           _ (prn :inaln inaln)
+           outaln (fs/replace-type insto ".out")]
+       (io/with-out-writer outaln
+         (print (sissiz-wrap inaln 1))) ;create random aln
+       (prn :outaln outaln)
+       (aln->sto outaln outsto {:foldmethod :RNAalifold})
+       ;;remove temp files
+       (fs/rm inaln)
+       (fs/rm outaln)
+       outsto))
+
+  ([insto outsto n]
+     (let [inaln (sto->aln insto (fs/replace-type insto ".aln"));convert in-sto to aln
+           outaln (fs/replace-type insto ".out")
+           split-str-at (fn [s re] (map str (re-seq re s) (rest (str/split re s))))
+           sissiz (split-str-at (sissiz-wrap inaln n) #"CLUSTAL W .*")
+           out (doall
+                (map (fn [i sizziz-out]
+                       (io/with-out-writer outaln
+                         (print sizziz-out)) ;create random aln
+                       (aln->sto outaln (fs/replace-type outsto (str "." i ".sto"))
+                                 {:foldmethod :RNAalifold})          
+                       outsto)
+                     (range n) sissiz))]
+       ;;remove temp files
+       (fs/rm inaln)
+       (fs/rm outaln)
+       out)))
+
+(defn shuffle-sto [& args]
+  (apply sto->randsto args))
 
 (defn sto->fasta
   "converts a sto file to a fasta file. removes the gaps from the

@@ -10,7 +10,11 @@
         refold
         ))
 
-(defn degap
+
+(defn split-str-at [s re]
+  (map str (re-seq re s) (rest (str/split s re))))
+
+(defn degap-col
   "Takes sqs which is a coll of seqs [name sequence] from an alignment
   with/without a structure st. Removes all gapped colls and if a
   structure is present, adjusts the structure to reflect the removed
@@ -65,9 +69,9 @@
      (map (fn [[nm sq] ungap-sq]
             ;;recombine degapped seqs with the proper names
             [nm ungap-sq]) 
-          sqs (degap sqs)))
+          sqs (degap-col sqs)))
   ([sqs st]
-     (let [dgap (degap sqs st)
+     (let [degap-col (degap-col sqs st)
            st (last dgap)]
        (conj (map (fn [[nm sq] ungap-sq]
                      ;;recombine degapped seqs with the proper names
@@ -229,6 +233,16 @@
       (outfn :5prime f "-5prime.sto")
       (outfn :3prime f "-3prime.sto"))))
 
+(defn trainset3-shuffled []
+  (let [fdir "/home/peis/bin/gaisr/trainset3/"
+        files (fs/re-directory-files (str fdir "pos") #"-NC.sto$")]
+    (map (fn [f]
+           (let [outname (fs/join fdir
+                                  "shuffled"
+                                  (-> (fs/replace-type f ".shuffle.sto")
+                                      fs/basename))]
+             (sto->randsto f outname 10)))
+         files)))
 
 (defn check-blastout-hits
   "checks blastout hits to identify hits that are in the blastout file
