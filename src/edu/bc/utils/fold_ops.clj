@@ -120,7 +120,7 @@
                  "--noPS"
                  :in s )
        :out)
-      (str/split-lines)
+      str/split-lines
       second
       (str/split #" ")
       first))
@@ -154,7 +154,7 @@
   (first (suboptimals s (args :n))))
 
 (defmethod fold2 :default [s]
-  (fold2 s {:foldmethod ::RNAfold}))
+  (fold2 s {:foldmethod :RNAfold}))
 
 (defn fold
   "Folds a sequence of RNA and returns only the target

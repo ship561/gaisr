@@ -499,7 +499,7 @@
                fsto)
         neutrality (for [sto stos] ;loop over stos
                                         ;(subopt-overlap-sto sto :ncore (opts :ncore))
-                     (generic-dist-sto sto (opts :distfn))
+                     (generic-dist-sto sto (opts :distfn) :ncore (opts :ncore))
                      )]
     (cond
      (or (nil? args) (opts :help)) (print usage) ;usage help
