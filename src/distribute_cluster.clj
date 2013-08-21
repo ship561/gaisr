@@ -65,7 +65,8 @@
                             ["-di" "--dir" "dir in which to produce pbs files"
                              :default nil]
                             ["-p" "--pbs" "prefix for pbs files to produce"
-                                  :default nil]
+                             :default nil]
+                            ["-o" "--out" "prefix for out files" :default nil]
                             ["-i" "--start" "start number for pbs file suffix"
                              :parse-fn #(Integer/parseInt %)
                              :default 0]
@@ -77,13 +78,14 @@
         _ (cond
            (nil? args) (println usage)
            (nil? (opts :pbs)) (prn "need prefix for pbs files")
+           (nil? (opts :out)) (prn "need prefix for out files")
            (nil? (opts :dir)) (prn "need output directory for pbs files")
            (not (fs/exists? (opts :dir))) (fs/mkdir (opts :dir)))
         pbs-to-submit (map (fn [i j flist]
                              (pbs-template (fs/join (opts :dir)
                                                     (str/join "." [(opts :pbs) i "pbs"]))
                                            flist
-                                           (str "out." j ".out")))
+                                           (str (opts :out) "." j ".out")))
                            (iterate inc (opts :start))
                            (iterate inc 0)
                            parts)]
