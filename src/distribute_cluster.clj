@@ -46,12 +46,12 @@
   "Currently used as a template for producing the pbs files for use on
   the shuffled data set in trainset3/shuffled"
 
-  [outpbs infiles outfile]
+  [outpbs infiles outfile distfn]
   (let [template {:shell "#!/bin/bash"
                   :resource "#PBS -l mem=5gb,nodes=1:ppn=16,walltime=100:00:00"
                   :working-dir "#PBS -d /home/peis/bin/gaisr/"
                   :command (str "lein run -m robustness/main-subopt-overlap -f " infiles
-                                " -di " workdir
+                                " -di " workdir " -dfn " distfn
                                 " -o " outfile " -nc 16")}]
     (io/with-out-writer outpbs
       (println (template :shell))
@@ -70,6 +70,7 @@
                             ["-i" "--start" "start number for pbs file suffix"
                              :parse-fn #(Integer/parseInt %)
                              :default 0]
+                            ["-dfn" "--distfn" "distance function" :default "subopt-overlap-neighbors"]
                             ["-n" "--partition-number" "number of partitions to make"
                              :parse-fn #(Integer/parseInt %)
                              :default 10])
@@ -85,7 +86,8 @@
                              (pbs-template (fs/join (opts :dir)
                                                     (str/join "." [(opts :pbs) i "pbs"]))
                                            flist
-                                           (str (opts :out) "." j ".out")))
+                                           (str (opts :out) "." j ".out")
+                                           (opts :distfn)))
                            (iterate inc (opts :start))
                            (iterate inc 0)
                            parts)]
