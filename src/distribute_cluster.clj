@@ -7,13 +7,15 @@
         edu.bc.bio.sequtils.files
         edu.bc.utils))
 
+(def ^{:private true} workdir (fs/join (fs/homedir) "bin/gaisr/trainset3/shuffled/"))
+
 (defn- partition-jobs
   "partitions the files into groups so that all groups are similar in size"
   
-  [nbins]
+  [workdir nbins]
   (let [file-lines (map (fn [f]
                           [(fs/basename f) (count (read-seqs f :info :names))]) 
-                        (fs/directory-files (fs/join (fs/homedir) "/bin/gaisr/trainset3/pos/") "-NC.sto"))]
+                        (fs/re-directory-files workdir "-NC*sto"))]
     (loop [lim 30
            bins (group-by second file-lines)]
       (if (and (> (count bins) nbins)
@@ -40,12 +42,17 @@
                  (conj v)))
           [] (vals bins)))
 
-(defn- pbs-template [outpbs infiles outfile]
+(defn- pbs-template
+  "Currently used as a template for producing the pbs files for use on
+  the shuffled data set in trainset3/shuffled"
+
+  [outpbs infiles outfile]
   (let [template {:shell "#!/bin/bash"
                   :resource "#PBS -l mem=5gb,nodes=1:ppn=16,walltime=100:00:00"
                   :working-dir "#PBS -d /home/peis/bin/gaisr/"
                   :command (str "lein run -m robustness/main-subopt-overlap -f " infiles
-                                "-o " outfile "-nc 32")}]
+                                " -di " workdir
+                                " -o " outfile " -nc 16")}]
     (io/with-out-writer outpbs
       (println (template :shell))
       (println (template :resource))
@@ -65,7 +72,7 @@
                             ["-n" "--partition-number" "number of partitions to make"
                              :parse-fn #(Integer/parseInt %)
                              :default 10])
-        parts (-> (partition-jobs (opts :partition-number))
+        parts (-> (partition-jobs workdir (opts :partition-number))
                   create-file-list)
         _ (cond
            (nil? args) (println usage)
@@ -86,15 +93,15 @@
   (test/is (= (sum
                (map (fn [f]
                       (count (read-seqs f :info :names))) 
-                    (fs/directory-files (fs/join (fs/homedir) "/bin/gaisr/trainset3/pos/") "-NC.sto")))
-              (->> (partition-jobs 7)
+                    (fs/re-directory-files workdir "-NC*sto")))
+              (->> (partition-jobs workdir 7)
                    keys
                    sum))))
 
 (test/deftest key-val-same
-  (test/is (= (->> (partition-jobs 7)
+  (test/is (= (->> (partition-jobs workdir 7)
                    keys)
-              (->> (partition-jobs 7)
+              (->> (partition-jobs workdir 7)
                    vals
                    (map
                     #(reduce (fn [v [_ n]]
