@@ -2,20 +2,23 @@
   (:require [edu.bc.fs :as fs]
             [clojure.string :as str]
             [clojure.contrib.io :as io]
-            [clojure.test :as test])
+            [clojure.test :as test]
+            [clojure-csv.core :as csv])
   (:use [clojure.tools.cli :only [cli]]
         edu.bc.bio.sequtils.files
+        [edu.bc.bio.sequtils.snippets-files :only [read-clj]]
         edu.bc.utils))
 
 (def ^{:private true} workdir (fs/join (fs/homedir) "bin/gaisr/trainset3/shuffled/"))
 
 (defn- partition-jobs
-  "partitions the files into groups so that all groups are similar in size"
+  "partitions the files into groups so that all groups are similar in
+  the number of sequences they contain"
   
-  [workdir nbins]
+  [file-list nbins]
   (let [file-lines (map (fn [f]
                           [(fs/basename f) (count (read-seqs f :info :names))]) 
-                        (fs/re-directory-files workdir "-NC*sto"))]
+                        file-list)]
     (loop [lim 30
            bins (group-by second file-lines)]
       (if (and (> (count bins) nbins)
@@ -50,7 +53,7 @@
   (let [template {:shell "#!/bin/bash"
                   :resource "#PBS -l mem=5gb,nodes=1:ppn=16,walltime=100:00:00"
                   :working-dir "#PBS -d /home/peis/bin/gaisr/"
-                  :command (str "lein run -m robustness/main-subopt-overlap -f " infiles
+                  :command (str "lein run -m robustness/main-subopt-overlap -f " "\"" infiles "\""
                                 " -di " workdir " -dfn " distfn
                                 " -o " outfile " -nc 16")}]
     (io/with-out-writer outpbs
@@ -60,30 +63,47 @@
       (println (template :command)))
     outpbs))
 
+(defn combin-output [prefix out-file]
+  (let [data (->> (str prefix ".\\d.out")
+                  re-pattern 
+                  (fs/re-directory-files "/home/peis/bin/gaisr/" )
+                  (mapcat read-clj ))]
+    (io/with-out-writer out-file (prn (vec data)))))
+
 (defn main-create-pbs [&  args]
   (let [[opts _ usage] (cli args
-                            ["-di" "--dir" "dir in which to produce pbs files"
+                            ["-f" "--file" "files to distribute evenly for jobs"
+                             :parse-fn #(str/split #" " %) ;create list of files
+                             :default nil]
+                            ["-wdir" "--workdir" "dir in which files are located"
+                             :default nil]
+                            ["-di" "--pdir" "dir in which to produce pbs files"
                              :default nil]
                             ["-p" "--pbs" "prefix for pbs files to produce"
                              :default nil]
-                            ["-o" "--out" "prefix for out files" :default nil]
+                            ["-o" "--out" "prefix for out files"
+                             :default nil]
                             ["-i" "--start" "start number for pbs file suffix"
                              :parse-fn #(Integer/parseInt %)
                              :default 0]
-                            ["-dfn" "--distfn" "distance function" :default "subopt-overlap-neighbors"]
+                            ["-dfn" "--distfn" "distance function"
+                             :default "subopt-overlap-neighbors"]
                             ["-n" "--partition-number" "number of partitions to make"
                              :parse-fn #(Integer/parseInt %)
                              :default 10])
-        parts (-> (partition-jobs workdir (opts :partition-number))
+        work-files (if (opts :workdir)
+                     (map #(fs/join (opts :workdir) %) (opts :file))
+                     (opts :file))
+        parts (-> (partition-jobs work-files (opts :partition-number))
                   create-file-list)
         _ (cond
            (nil? args) (println usage)
            (nil? (opts :pbs)) (prn "need prefix for pbs files")
            (nil? (opts :out)) (prn "need prefix for out files")
-           (nil? (opts :dir)) (prn "need output directory for pbs files")
+           (nil? (opts :pdir)) (prn "need output directory for pbs files")
            (not (fs/exists? (opts :dir))) (fs/mkdir (opts :dir)))
         pbs-to-submit (map (fn [i j flist]
-                             (pbs-template (fs/join (opts :dir)
+                             (pbs-template (fs/join (opts :pdir)
                                                     (str/join "." [(opts :pbs) i "pbs"]))
                                            flist
                                            (str (opts :out) "." j ".out")
@@ -98,14 +118,14 @@
                (map (fn [f]
                       (count (read-seqs f :info :names))) 
                     (fs/re-directory-files workdir "-NC*sto")))
-              (->> (partition-jobs workdir 7)
+              (->> (partition-jobs (fs/re-directory-files workdir "-NC*sto") 7)
                    keys
                    sum))))
 
 (test/deftest key-val-same
-  (test/is (= (->> (partition-jobs workdir 7)
+  (test/is (= (->> (partition-jobs (fs/re-directory-files workdir "-NC*sto") 7)
                    keys)
-              (->> (partition-jobs workdir 7)
+              (->> (partition-jobs (fs/re-directory-files workdir "-NC*sto") 7)
                    vals
                    (map
                     #(reduce (fn [v [_ n]]
