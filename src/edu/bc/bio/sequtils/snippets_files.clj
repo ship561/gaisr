@@ -79,9 +79,11 @@
    fold into part of the cons structure."
   
   [sto]
-  (let [{sqs :seqs cons :cons} (read-sto sto :info :both)
-        cons (change-parens (first cons))]
-    (valid-seq-struct sqs cons)))
+  (if (fs/exists? sto)
+    (let [{sqs :seqs cons :cons} (read-sto sto :info :both)
+          cons (change-parens (first cons))]
+      (valid-seq-struct sqs cons))
+    false))
 
 (defn print-aln
   "prints out the seq-lines in clustalW format"
@@ -224,6 +226,19 @@
                                     :msg "SISSIz error"}))
     out))
 
+(defn- _sto->randsto [inaln outaln outsto]
+  (loop [lim 100
+         valid? (valid-seq-sto? outsto)]
+    (if (pos? lim)
+      (do (io/with-out-writer outaln
+            (print (sissiz-wrap inaln 1))) ;create random aln
+          (prn :outaln outaln)
+          (aln->sto outaln outsto {:foldmethod :RNAalifold})
+          (when-not (valid-seq-sto? outsto)
+            (recur (dec lim)
+                   false)))
+      (throw+ {:inaln inaln :msg "limit reached"}))))
+
 (defn sto->randsto
   "takes a sto input file and generates a random sto to specified
   output. Program uses SISSIz to make the random aln. Then the aln is
@@ -234,10 +249,7 @@
      (let [inaln (sto->aln insto (fs/replace-type insto ".aln"));convert in-sto to aln
            _ (prn :inaln inaln)
            outaln (fs/replace-type insto ".out")]
-       (io/with-out-writer outaln
-         (print (sissiz-wrap inaln 1))) ;create random aln
-       (prn :outaln outaln)
-       (aln->sto outaln outsto {:foldmethod :RNAalifold})
+       (_sto->randsto inaln outaln outsto)
        ;;remove temp files
        (fs/rm inaln)
        (fs/rm outaln)
@@ -250,10 +262,7 @@
            sissiz (split-str-at (sissiz-wrap inaln n) #"CLUSTAL W .*")
            out (doall
                 (map (fn [i sizziz-out]
-                       (io/with-out-writer outaln
-                         (print sizziz-out)) ;create random aln
-                       (aln->sto outaln (fs/replace-type outsto (str "." i ".sto"))
-                                 {:foldmethod :RNAalifold})          
+                       (_sto->randsto inaln outaln (fs/replace-type outsto (str "." i ".sto")))
                        outsto)
                      (range n) sissiz))]
        ;;remove temp files
@@ -312,4 +321,6 @@
   "Reads a clj data structure"
   
   [f]
-  (->> (slurp f) read-string ))
+  (if (fs/exists? f)
+    (->> (slurp f) read-string )
+    (throw+ {:msg "no such file" :file f})))

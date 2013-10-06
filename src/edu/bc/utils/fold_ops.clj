@@ -13,7 +13,7 @@
                       pfile (str viennadir "rna_andronescu2007.par")
                       pfile (if (fs/exists? pfile)
                               pfile
-                              (str viennadir "/misc/rna_andronescu2007.par"))]
+                              (str viennadir "misc/rna_andronescu2007.par"))]
                   (if (fs/exists? pfile)
                     pfile
                     (throw+ {:file pfile} "parameter file not exist" ))))
@@ -110,11 +110,11 @@
       [0 map-structures]) ;returns all suboptimal structures
     ))
 
-;;;(ns-unmap 'edu.bc.utils.fold-ops 'fold2)
-(defmulti fold2 (fn [s & args]
+(ns-unmap 'edu.bc.utils.fold-ops 'fold2)
+(defmulti fold (fn [s & args]
                   ((or (first args) {}) :foldmethod)))
 
-(defmethod fold2 :RNAfold [s args]
+(defmethod fold :RNAfold [s args]
   (-> ((shell/sh "RNAfold"
                  "-P" param-file
                  "--noPS"
@@ -125,7 +125,7 @@
       (str/split #" ")
       first))
 
-(defmethod fold2 :RNAfoldp [s args]
+(defmethod fold :RNAfoldp [s args]
   (let [ensemble-div  (->> ((shell/sh "RNAfold"
                                       "-p"
                                       "-P" param-file
@@ -141,7 +141,7 @@
     ;;(when (fs/exists? "dot.ps") (do (prn "del dot") (fs/rm "dot.ps")))
     ensemble-div))
 
-(defmethod fold2 :RNAsubopt [s args] 
+(defmethod fold :RNAsubopt [s args] 
   (->> ((shell/sh "RNAsubopt"
                   "-p" (str (args :n))        ;samples according to
                                         ;Boltzmann distribution
@@ -150,53 +150,54 @@
        str/split-lines
        (remove #(re-find #"[^\(\)\.]" %))))
 
-(defmethod fold2 :centroid [s args]
+(defmethod fold :centroid [s args]
   (first (suboptimals s (args :n))))
 
-(defmethod fold2 :default [s]
-  (fold2 s {:foldmethod :RNAfold}))
+(defmethod fold :default [s]
+  (fold s {:foldmethod :RNAfold}))
 
-(defn fold
-  "Folds a sequence of RNA and returns only the target
+(comment 
+  (defn fold
+    "Folds a sequence of RNA and returns only the target
    structure. Target structure can either be centroid or MFE."
-  
-  [s & {:keys [foldtype n]
-        :or {foldtype "mfe" n 10000}}]
-  (case foldtype
-    "mfe"
-    (-> ((shell/sh "RNAfold"
-                    "-P" param-file
-                    "--noPS"
-                    :in s)
-          :out)
-         (str/split-lines)
-         second
-         (str/split #" ")
-         first)
-   
-    "centroid"
-    (first (suboptimals s n))
     
-    "RNAmutants"
-    0 #_(->> ((shell/sh "./RNAmutants"
-                        "-l" "./lib/"
-                        "--mutation" "1"
-                        "-n" (str n)
-                        "--input-string" s
-                        :dir "/home/kitia/Desktop/RNAmutants/")
-              :out)
-             (drop-until #(re-find #"\> sampling \d+" ))
-             (remove #(re-find #"[^\(\)\.]" %)))
-    
-    "RNAsubopt"
-    (->> ((shell/sh "RNAsubopt"
-                    "-p" (str n) ;samples according to
+    [s & {:keys [foldtype n]
+          :or {foldtype "mfe" n 10000}}]
+    (case foldtype
+      "mfe"
+      (-> ((shell/sh "RNAfold"
+                     "-P" param-file
+                     "--noPS"
+                     :in s)
+           :out)
+          (str/split-lines)
+          second
+          (str/split #" ")
+          first)
+      
+      "centroid"
+      (first (suboptimals s n))
+      
+      "RNAmutants"
+      0 #_(->> ((shell/sh "./RNAmutants"
+                          "-l" "./lib/"
+                          "--mutation" "1"
+                          "-n" (str n)
+                          "--input-string" s
+                          :dir "/home/kitia/Desktop/RNAmutants/")
+                :out)
+               (drop-until #(re-find #"\> sampling \d+" ))
+               (remove #(re-find #"[^\(\)\.]" %)))
+      
+      "RNAsubopt"
+      (->> ((shell/sh "RNAsubopt"
+                      "-p" (str n) ;samples according to
                                         ;Boltzmann distribution
-                    :in s)
-          :out)
-         str/split-lines
-         (remove #(re-find #"[^\(\)\.]" %)))
-    ))
+                      :in s)
+            :out)
+           str/split-lines
+           (remove #(re-find #"[^\(\)\.]" %)))
+      )))
 
 (defn align-fold
   "Takes a fasta file and outputs an alignment with structure in

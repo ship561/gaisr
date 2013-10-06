@@ -71,7 +71,7 @@
             [nm ungap-sq]) 
           sqs (degap-col sqs)))
   ([sqs st]
-     (let [degap-col (degap-col sqs st)
+     (let [dgap (degap-col sqs st)
            st (last dgap)]
        (conj (map (fn [[nm sq] ungap-sq]
                      ;;recombine degapped seqs with the proper names

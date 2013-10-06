@@ -353,7 +353,24 @@
               (take (* 4 (count s)))
               last)) ))
 
+(defn alignment-quality
+    "find the alignment quality for the negative training
+    examples. returns the fraction of base-pairs to the entire
+    sequence and the mean number of contiguous bases in the alignment"
 
+    [f]
+    (let [{st :cons seqs :seqs} (doall (read-sto f))
+          st (first st)
+          ;_ (prn f (count (re-seq #"[<|\(]" st)))
+          bp-len (double (/ (count (re-seq #"[<|\(]" st))
+                            (count st)))
+          mean-base-length (mean 
+                            (mapcat (fn [s] 
+                                      (->> (re-seq #"[ACGU]*" s)
+                                           (remove empty? )
+                                           (map count )))
+                                    seqs))]
+      [bp-len mean-base-length]))
 
 (comment
   
@@ -505,24 +522,7 @@
                   V)))
             [[][]] (keys pneuts)))
 
-  (defn alignment-quality
-    "find the alignment quality for the negative training
-    examples. returns the fraction of base-pairs to the entire
-    sequence and the mean number of contiguous bases in the alignment"
-
-    [f]
-    (let [{st :cons seqs :seqs} (read-sto f)
-          st (first st)
-          ;_ (prn f (count (re-seq #"[<|\(]" st)))
-          bp-len (double (/ (count (re-seq #"[<|\(]" st))
-                            (count st)))
-          mean-base-length (mean 
-                            (mapcat (fn [s] 
-                                      (->> (re-seq #"[ACGU]*" s)
-                                           (remove empty? )
-                                           (map count )))
-                                    seqs))]
-      [bp-len mean-base-length]))
+  
 
   ;;;separate neutrality data based on the function of the RNA
   (io/with-out-writer "/home/kitia/bin/gaisr/robustness/compare-bpdist/neutrality-by-function.csv"
@@ -660,6 +660,75 @@
              (merge-with #(-> (concat %1 %2) distinct vec) mseqs)
              pp/pprint)))) ;merge with existing
 
+  ;;;find percentage of sequences with at least 1 inverse struture
+  (let [stos (fs/directory-files "/home/peis/bin/gaisr/trainset3/pos/" "-NC.sto")
+        inv (fs/directory-files "/home/peis/bin/gaisr/trainset3/pos/" "inv.clj")
+        invseq-per (for [sto stos
+                         :let [S (set (read-seqs sto :info :name))]]
+                     [sto (/ (count (sets/intersection S
+                                                       (set (mapcat (fn [i] (->> (read-clj i) (into {}) keys)) inv))))
+                             (count S))])]
+    [(double (reduce + (map second invseq-per))) (count invseq-per)])
 
-  
+  ;;;find mean bpdist from target structure
+  (let [stos (fs/directory-files "/home/peis/bin/gaisr/trainset3/pos/" "-NC.sto")
+        invseq-per (for [sto stos
+                         :let [invseqs (read-clj (fs/replace-type sto ".walk.clj"))
+                               given-st (as-> (read-sto sto :info :both) x 
+                                              (x :seqs)
+                                              (map (fn [[nm s]]
+                                                     [nm (second
+                                                          (degap-conskeys s
+                                                                          (-> (read-sto sto :info :data)
+                                                                              :cons
+                                                                              first
+                                                                              change-parens)))]) 
+                                                   x)
+                                              (into {} x))]
+                         :when invseqs]
+                     [sto 
+                      (for [[nm iseqs] invseqs
+                            :when (given-st nm)]
+                        [nm 
+                         (mean
+                          (pxmap (fn [predicted-st]
+                                   (bpdist (given-st nm) predicted-st :bpdist true))
+                                 10
+                                 (mapcat
+                                  #(fold2 % {:foldmethod :RNAsubopt :n 100})
+                                  iseqs)))])])]
+    (first invseq-per))
+
+
+  ;;;getting the name and filename associated
+  (io/with-out-writer "/home/peis/bin/gaisr/trainset3/file_to_name.txt"
+    (let [name-map (for [sto (fs/directory-files "/home/peis/bin/gaisr/trainset3/pos/" "-NC.sto")
+                         :let [gc-lines (first (join-sto-fasta-lines sto ""))
+                               id (first (filter #(re-find #"DE" %) gc-lines))]]
+                     [(fs/basename sto) (second (re-find #"^#=GF DE\s+(.*)" id))])]
+      (-> name-map
+          vec
+          clojure.pprint/pprint)))
+
+
+  ;;;find the % of robust seqs by function
+  (let [file "/home/kitia/bin/gaisr/robustness/compare-bpdist/robust-by-function.csv"
+        data (map (fn [line]
+                    (let [[function wt-neut invfold-neut name]
+                          (str/split #"," line)]
+                      [function 
+                       (Double/parseDouble wt-neut)
+                       (Double/parseDouble invfold-neut)
+                       name]))
+                  (-> file io/read-lines rest))]
+    ;;gets the percentage of robust sequences organized by
+    ;;function. the results are returned in as vectors
+    ;;[function total-seqs pos-percent neg-percent]
+    (map (fn [[function d]];[key=function val=data]
+           (let [N (count d)
+                 {pos true neg false} (group-by (fn [[_ wt inv _]]
+                                                  (>= wt inv))
+                                                d)]
+             [function N (map #(/ (count %) N) [pos neg])]))
+         (group-by first data)))
   )

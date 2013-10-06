@@ -275,12 +275,13 @@
                         inc))
                   (second avg-subopt))
         [wt & muts]  (-> avg-subopt second transpose)
-        neutrality (map (fn [[wt & muts]] ;;neut of each seq
-                          {:wt wt :mut (mean muts)})
-                        (second avg-subopt))
-        robustness (map (fn [[wt & muts]] (> wt (mean muts))) (second avg-subopt))]
+        neutrality (map (fn [w m] ;;neut of each seq
+                          {:wt w :mut (mean muts)})
+                        wt muts)
+        robustness (map (fn [m] (> (m :wt) (m :mut))) neutrality)]
     {:wt {:mean (-> wt mean) :sd (sd wt)}
-     :muts {:mean (-> muts flatten mean) :sd (-> (map variance muts) mean Math/sqrt)}
+     :muts {:mean (-> muts flatten mean)
+            :sd (-> (map variance muts) mean Math/sqrt)}
      :rank rank
      :neutrality neutrality
      :robust? robustness}))
@@ -304,28 +305,27 @@
    %overlap-between-cons-and-suboptimal-structure for each
    sequence (cons wt muts)"
 
-  [sto n & {:keys [ncore nsubopt]
+  [sto n & {:keys [ncore nsubopt invfile-ext]
             :or {ncore 5
-                 nsubopt 1000}}]
+                 nsubopt 1000
+                 invfile-ext ".inv.clj"}}]
   (let [ ;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
-        inv-sto (str (str/butlast 3 sto) "inv.clj")
+        inv-sto (fs/replace-type sto invfile-ext)
         {l :seqs cons :cons} (read-sto sto :info :both)
         cons (change-parens (first cons))
         ]
     [sto
      (map (fn [[nm s]]
             (let [[s st cons-keys] (degap-conskeys s cons)
-                  inv-seq (create-inv-seqs nm s st n inv-sto) ;vector of n inverse-folded seqs
+                  inv-seq (take n (get (read-clj inv-sto) nm)) ;vector of n
+                     ;inverse-folded seqs
                   neut (map (fn [x]
-                              (subopt-overlap-neighbors x st :ncore ncore :nsubopt nsubopt))
-                            (concat (list s) inv-seq))]
+                              (subopt-overlap-neighbors x st
+                                                        :ncore ncore
+                                                        :nsubopt nsubopt))
+                            (conj inv-seq s))]
               ;;average %overlap for each wt and inv-fold seq
-              (map (fn [x]
-                     (->> x       ;mut composed of 1000 subopt structs
-                          (apply merge-with +) ;merge %overlap freqmap
-                                        ;for wt and mut 
-                          mean))
-                   neut)))
+              neut))
           l)]))
 
 ;;;-----------------------------------
@@ -461,6 +461,21 @@
         (doseq [x linecsv] (println x)))
       lines)))
 
+(defn neut-data->csv
+  "takes the output data from the main-subopt-overlap function which
+  should be a clj data structure. The function appends the data in csv
+  format to a specific csv"
+
+  [data label]
+  (let [outcsv "/home/peis/bin/gaisr/robustness/compare-neutrality/neutrality-distribution-trainset3.csv"]
+    (snippets-analysis/with-out-appender  outcsv
+      (doseq [[filename vs] data
+              v vs ;neutrality value
+              :let [sto (fs/basename filename)
+                    {nm :name type :type} (-> (str (re-find #"RF\d+\-seed" sto) ".sto")
+                                              snippets-analysis/parse-sto-function )]]
+        (println (str/join "," [sto v label nm (apply str type)]))))))
+
 ;;;---------------------------------------------------
 
 ;;;---------------------------------------------------
@@ -495,7 +510,7 @@
                (map #(fs/join fdir  %) (opts :file))
                (opts :file))
         stos (if (opts :debug)
-               (take 1 (fs/re-directory-files (opts :dir) #"RF00555-seed*sto"))
+               (take 2 (fs/re-directory-files (opts :dir) #"RF00555-seed*sto"))
                fsto)
         neutrality (for [sto stos] ;loop over stos
                                         ;(subopt-overlap-sto sto :ncore (opts :ncore))
@@ -516,7 +531,7 @@
      ["-i" "--ignore" "file(s) to ignore" :parse-fn parse :default nil]
      ["-o" "--outfile" "REQUIRED. file to write to" :default nil]
      ["-di" "--dir" "dir in which files are located"
-      :default (str homedir "/bin/gaisr/trainset2/pos/")]
+      :default nil]
      ["-d" "--debug" :default nil :flag true]
      ["-n" "--nseqs" "number of inverse seqs to create"
       :parse-fn #(Integer/parseInt %) :default 100]
@@ -536,36 +551,33 @@
   [& args]
   (let [[opts _ usage] (apply cli args banner)
         ofile (opts :outfile) ;storage location
-        fdir (opts :dir)]
+        infiles (if (opts :dir)
+                (map #(fs/join (opts :dir) %) (opts :file))
+                (opts :file))]
     (cond
      (opts :help) (print usage)
      (nil? args) (print usage)
      (nil? ofile) (println "requires outfile")
      (nil? (opts :file)) (println "requires in files")
      :else
-     (doseq [instos (->> (remaining-files #(not (identity %))
-                                          (opts :file)
-                                          (opts :ignore))
-                         (partition-all 2 ) ;group into manageable
-                                        ;chuncks to write small
-                                        ;sections at a time
-                         )] 
-       (let [cur (doall
-                  (map (fn [insto]
-                         [(keyword insto)
-                          ;;list-of-lists average subopt overlap of 1-mut structures (neutrality)
-                          (-> (subopt-robustness (str fdir insto)
-                                                 (opts :nseqs)
-                                                 :ncore (opts :ncore)) 
-                              subopt-robustness-summary)])
-                       instos))
-             data (if (and (fs/exists? ofile)
-                           (not (fs/empty? ofile)))
-                    (doall (concat (read-clj ofile) cur))
-                    cur)]
-         (io/with-out-writer ofile
-           (println ";;;generated using main-subopt-robustness. Estimate of the significance of the wild-type sto compared to the inverse folded version.")
-           (prn data))))
+     (doseq [instos (partition-all 2 infiles) 
+             :let [cur (doall
+                        (map (fn [insto]
+                               [(keyword insto)
+                                ;;list-of-lists average subopt overlap of 1-mut structures (neutrality)
+                                (-> (subopt-robustness insto
+                                                       (opts :nseqs)
+                                                       :ncore (opts :ncore)
+                                                       :invfile-ext ".walk.clj") 
+                                    subopt-robustness-summary)])
+                             instos))
+                   data (if (and (fs/exists? ofile)
+                                 (not (fs/empty? ofile)))
+                          (doall (concat (read-clj ofile) cur))
+                          cur)]]
+       (io/with-out-writer ofile
+         (println ";;;generated using main-subopt-robustness. Estimate of the significance of the wild-type sto compared to the inverse folded version.")
+         (prn data)))
      )))
 
 (defn main-subopt-significance
@@ -1196,6 +1208,38 @@
               (prn (mapv #(vector (fs/basename (first %))
                                   (vec (second %)))
                          @bar)))
+
+;;random stuff to add groupings to the csv. temp file created. must
+;;delete afterwards. 
+(let [[header & data] (csv/parse-csv (slurp "/home/peis/bin/gaisr/robustness/compare-neutrality/neutrality-distribution-trainset3.csv"))
+                  update-header (conj header "distance metric")]
+  (io/with-out-writer "/home/peis/bin/gaisr/robustness/compare-neutrality/neutrality-distribution-trainset3-1.csv"
+    (print (csv/write-csv (conj (map (fn [d] 
+                                       (conj d (re-find #"^\w+" (third d))))
+                                     data)
+                                update-header)))))
+
+(defn data->csv
+  "takes the data from main-subopt-overlap and makes it into csv
+  format and appends it to the outcsv file. example
+
+  data = @bpdist-3prime-neg2
+  outcsv = \"/home/peis/bin/gaisr/robustness/compare-neutrality/neutrality-distribution-trainset3.csv\"
+  dist-measure =  \"bpdist-3prime-neg2\" "
+  
+  [data outcsv dist-measure]
+  (let [outfn (fn []
+                (doseq [[fnm vs] data
+                        v (map str vs)
+                        :let [sto (fs/basename fnm)
+                              {nm :name type :type} (snippets-analysis/parse-sto-function (str (re-find #"RF\d+\-seed" sto) ".sto"))
+                              dist-metric (re-find #"^\w+" dist-measure)]]
+                  (print (csv/write-csv [[sto v dist-measure nm (apply str type) dist-metric]]))))]
+   (if (fs/exists? outcsv)
+     (snippets-analysis/with-out-appender outcsv (outfn))
+     (io/with-out-writer outcsv
+       (println "file name,neutrality,distance measure,ID,function,distance metric")
+       (outfn)))))
 )
 
 

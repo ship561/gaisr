@@ -6,7 +6,9 @@
             [edu.bc.fs :as fs]
             )
   (:use [clojure.tools.cli :only [cli]]
-        [edu.bc.bio.sequtils.files :only (read-seqs)])
+        [edu.bc.bio.sequtils.files :only (read-seqs)]
+        [robustness :only [valid-seq-struct]]
+        [snippets-analysis :only [alignment-quality]])
   )
 
 (def mute-dir (str (fs/homedir) "/bin/RNAMute/"))
@@ -57,6 +59,7 @@
   (let [norm-dist (fn [d L] (- 1 (/ d L)))] ;1-d/L
     (for [s (sto->seqs insto)
           :let [len (-> (io/read-lines s)
+                        doall
                         first
                         count)]]
       ;;first parses the RNAmute output then normalizes it in the mapfn
@@ -73,19 +76,25 @@
                              :default (str (fs/homedir) "/bin/gaisr/robustness/rnamute-data.clj")]
                             ["-di" "--dir" "dir in which files are located"
                              :default nil]
+                            ["-d" "--debug" "debug program prints to repl"
+                             :default nil
+                             :flag true]
                             )
         files (if (opts :dir)
                 (map #(fs/join (opts :dir) %) (opts :file))
                 (opts :file))
-        results (->> (map #(do (prn %)
-                               (RNAmute-dist %)) files)
-                     (apply concat)
-                     vec)]
-    (io/with-out-writer (opts :outfile)
-      (println "#data for rnamute program running it on all seqs in trainset2/pos with re=\".\\d.sto$\". returns a vector of vectors of the average distance already normalized using <1-d/L>. Vector format is [dotbracket-dist shapiro-dist].")
-      (doseq [[bpdist shapirodist] results]
-        (print (str bpdist ",bp-distance\n"
-                    shapirodist ",shapiro-dist\n"))))))
+        results (mapv #(do (prn %)
+                           (conj (RNAmute-dist %) %))
+                      files)
+        outtxt (fn [] (doseq [[nm & vs] results
+                             [bpdist shapirodist] vs]
+                       (print (str nm "," bpdist ",bp-distance\n"
+                                   nm "," shapirodist ",shapiro-dist\n"))))]
+    (if (opts :debug)
+      (do (prn results) (outtxt))
+      (io/with-out-writer (opts :outfile)
+        (println "#data for rnamute program running it on all seqs in trainset2/pos with re=\".\\d.sto$\". returns a vector of vectors of the average distance already normalized using <1-d/L>. Vector format is [dotbracket-dist shapiro-dist].")
+        (outtxt)))))
 
 
 (test/deftest- footest
