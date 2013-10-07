@@ -5,7 +5,9 @@
             ;;[incanter.stats :as stats]
             [incanter.charts :as charts]
             ;;[clojure.contrib.json :as json]
-            [clojure.set :as sets])
+            [clojure.set :as sets]
+            [edu.bc.utils.snippets-utils]
+            [edu.bc.bio.sequtils.alignment-info])
   (:use [clojure.tools.cli :only [cli]]
         edu.bc.bio.seq-utils
         edu.bc.bio.sequtils.files
@@ -468,12 +470,12 @@
 
   [data label]
   (let [outcsv "/home/peis/bin/gaisr/robustness/compare-neutrality/neutrality-distribution-trainset3.csv"]
-    (snippets-analysis/with-out-appender  outcsv
+    (edu.bc.utils.snippets-utils/with-out-appender  outcsv
       (doseq [[filename vs] data
               v vs ;neutrality value
               :let [sto (fs/basename filename)
                     {nm :name type :type} (-> (str (re-find #"RF\d+\-seed" sto) ".sto")
-                                              snippets-analysis/parse-sto-function )]]
+                                              edu.bc.bio.sequtils.alignment-info/parse-sto-function )]]
         (println (str/join "," [sto v label nm (apply str type)]))))))
 
 ;;;---------------------------------------------------
@@ -528,7 +530,6 @@
     [["-f" "--file" "REQUIRED. file(s) to check neutrality for"
       :parse-fn parse ;create list of files
       :default nil]
-     ["-i" "--ignore" "file(s) to ignore" :parse-fn parse :default nil]
      ["-o" "--outfile" "REQUIRED. file to write to" :default nil]
      ["-di" "--dir" "dir in which files are located"
       :default nil]
@@ -1184,23 +1185,24 @@
                 (doall neutrality))))
       ]
   (main "-f" (->> (fs/directory-files "/home/peis/bin/gaisr/trainset3/neg/5prime/" ".sto")
-                  (filter #(> (-> % snippets-analysis/alignment-quality first) 0.05) )
+                  (filter #(> (-> % edu.bc.bio.sequtils.alignment-info/alignment-quality first) 0.05) )
                   (str/join " " ))
         "-D" #(bpsomething %1 %2 :bp true)))
 
-(snippets-analysis/with-out-appender "/home/peis/bin/gaisr/robustness/compare-neutrality/neutrality-distribution-trainset3.csv" 
-              (doseq [[fnm vs] @bpdist-3prime-neg2
-                      v vs
-                      :let [sto (fs/basename fnm)
-                            {nm :name type :type} (snippets-analysis/parse-sto-function (str (re-find #"RF\d+\-seed" sto) ".sto"))]]
-                (println (str sto "," v ",bpdist-3prime-neg2," nm "," (apply str type)))))
+(edu.bc.utils.snippets-utils/with-out-appender
+  "/home/peis/bin/gaisr/robustness/compare-neutrality/neutrality-distribution-trainset3.csv" 
+  (doseq [[fnm vs] @bpdist-3prime-neg2
+          v vs
+          :let [sto (fs/basename fnm)
+                {nm :name type :type} (edu.bc.bio.sequtils.alignment-info/parse-sto-function (str (re-find #"RF\d+\-seed" sto) ".sto"))]]
+    (println (str sto "," v ",bpdist-3prime-neg2," nm "," (apply str type)))))
 
-  #_(main "-f" (->> (fs/directory-files "/home/peis/bin/gaisr/trainset3/neg/3prime/" ".sto")
-                    (filter valid-seq-struct )
-                    (map fs/basename)
-                    (str/join " " ))
-          "--dir" "/home/peis/bin/gaisr/trainset3/neg/3prime/"
-          "-D" #(pccsomething %1 %2))
+#_(main "-f" (->> (fs/directory-files "/home/peis/bin/gaisr/trainset3/neg/3prime/" ".sto")
+                  (filter valid-seq-struct )
+                  (map fs/basename)
+                  (str/join " " ))
+        "--dir" "/home/peis/bin/gaisr/trainset3/neg/3prime/"
+        "-D" #(pccsomething %1 %2))
 
 
 (io/with-out-writer "/home/peis/bin/gaisr/robustness/compare-bpdist12.clj"
@@ -1232,11 +1234,11 @@
                 (doseq [[fnm vs] data
                         v (map str vs)
                         :let [sto (fs/basename fnm)
-                              {nm :name type :type} (snippets-analysis/parse-sto-function (str (re-find #"RF\d+\-seed" sto) ".sto"))
+                              {nm :name type :type} (edu.bc.bio.sequtils.alignment-info/parse-sto-function (str (re-find #"RF\d+\-seed" sto) ".sto"))
                               dist-metric (re-find #"^\w+" dist-measure)]]
                   (print (csv/write-csv [[sto v dist-measure nm (apply str type) dist-metric]]))))]
    (if (fs/exists? outcsv)
-     (snippets-analysis/with-out-appender outcsv (outfn))
+     (edu.bc.utils.snippets-utils/with-out-appender outcsv (outfn))
      (io/with-out-writer outcsv
        (println "file name,neutrality,distance measure,ID,function,distance metric")
        (outfn)))))

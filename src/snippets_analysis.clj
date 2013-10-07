@@ -20,32 +20,6 @@
 
 (def ^{:private true} homedir (fs/homedir))
 
-(defmacro with-out-appender [f & body]
-  `(with-open [w# (clojure.java.io/writer ~f :append true)]
-     (binding [*out* w#] ; I forgot this bit before.
-       ~@body)))
-
-(defn lazy-file-lines [file]
-  (letfn [(helper [rdr]
-            (lazy-seq
-             (if-let [line (.readLine rdr)]
-               (cons line (helper rdr))
-               (do (.close rdr) nil))))]
-    (helper (clojure.java.io/reader file))))
-
-(defmacro print-proper
-    "Do body in the repl normally. if a file f and body is provided, then
-    it will do the body to the file."
-    
-    ([body] body)
-    ([f body]
-       `(with-open [w# (clojure.java.io/writer ~f)]
-          (binding [*out* w#]
-            ~body))))
-
-(defmacro unless [pred a b]
-  `(if (not ~pred) ~a ~b))
-
 (defn GC-content [s]
   (let [pr (probs 1 s)]
     (+ (get pr \C 0)
@@ -255,28 +229,14 @@
             :seq (rdat "SEQUENCE")
             :structure (rdat "STRUCTURE")))))
 
-(def ^{:doc "parse out the function and designation of an RNA from the
-    sto file. Typically only used in to parse the Rfam seed alignment
-    file. Returns a map for quick lookup"}
 
-  parse-sto-function
-    (reduce (fn [m sto]
-              (let [gc-lines (first (join-sto-fasta-lines sto ""))
-                    get-comment (fn [re] (->> gc-lines
-                                             (map #(-> (re-find re %) last) )
-                                             (remove empty?)
-                                             first))
-                    tp (->> (get-comment #"GF TP\s*(.*)") (str/split #" ") set)
-                    de (get-comment #"GF DE\s*(.*)")]
-                (assoc m (fs/basename sto) {:name de :type tp})))
-            {}
-            (fs/directory-files (str homedir "/bin/gaisr/trainset3/pos") "seed.sto")))
 
 (defn markov-step
   "probs are a map with state and probability of occuring {:A 0.1 :H
   0.5 :T 0.2 :X 0.2}"
   
   [probs]
+  {:pre (= 1 (reduce + (vals probs)))}
   (let [cum-probs (reductions + (vals probs))
         prob-table (map vector cum-probs (keys probs))
         r (rand)
@@ -294,9 +254,9 @@
   ([L base-probs]
      (apply str (repeatedly L #(markov-step base-probs)))))
 
-  (defn plasticity [s]
-    (/ (* 2 (fold2 s {:foldmethod :RNAfoldp}) )
-       (count s)))
+(defn plasticity [s]
+  (/ (* 2 (fold2 s {:foldmethod :RNAfoldp}) )
+     (count s)))
 
 (defn perfect-struct?
     "takes a seq and compares it to the target."
@@ -353,24 +313,7 @@
               (take (* 4 (count s)))
               last)) ))
 
-(defn alignment-quality
-    "find the alignment quality for the negative training
-    examples. returns the fraction of base-pairs to the entire
-    sequence and the mean number of contiguous bases in the alignment"
 
-    [f]
-    (let [{st :cons seqs :seqs} (doall (read-sto f))
-          st (first st)
-          ;_ (prn f (count (re-seq #"[<|\(]" st)))
-          bp-len (double (/ (count (re-seq #"[<|\(]" st))
-                            (count st)))
-          mean-base-length (mean 
-                            (mapcat (fn [s] 
-                                      (->> (re-seq #"[ACGU]*" s)
-                                           (remove empty? )
-                                           (map count )))
-                                    seqs))]
-      [bp-len mean-base-length]))
 
 (comment
   
@@ -660,75 +603,6 @@
              (merge-with #(-> (concat %1 %2) distinct vec) mseqs)
              pp/pprint)))) ;merge with existing
 
-  ;;;find percentage of sequences with at least 1 inverse struture
-  (let [stos (fs/directory-files "/home/peis/bin/gaisr/trainset3/pos/" "-NC.sto")
-        inv (fs/directory-files "/home/peis/bin/gaisr/trainset3/pos/" "inv.clj")
-        invseq-per (for [sto stos
-                         :let [S (set (read-seqs sto :info :name))]]
-                     [sto (/ (count (sets/intersection S
-                                                       (set (mapcat (fn [i] (->> (read-clj i) (into {}) keys)) inv))))
-                             (count S))])]
-    [(double (reduce + (map second invseq-per))) (count invseq-per)])
 
-  ;;;find mean bpdist from target structure
-  (let [stos (fs/directory-files "/home/peis/bin/gaisr/trainset3/pos/" "-NC.sto")
-        invseq-per (for [sto stos
-                         :let [invseqs (read-clj (fs/replace-type sto ".walk.clj"))
-                               given-st (as-> (read-sto sto :info :both) x 
-                                              (x :seqs)
-                                              (map (fn [[nm s]]
-                                                     [nm (second
-                                                          (degap-conskeys s
-                                                                          (-> (read-sto sto :info :data)
-                                                                              :cons
-                                                                              first
-                                                                              change-parens)))]) 
-                                                   x)
-                                              (into {} x))]
-                         :when invseqs]
-                     [sto 
-                      (for [[nm iseqs] invseqs
-                            :when (given-st nm)]
-                        [nm 
-                         (mean
-                          (pxmap (fn [predicted-st]
-                                   (bpdist (given-st nm) predicted-st :bpdist true))
-                                 10
-                                 (mapcat
-                                  #(fold2 % {:foldmethod :RNAsubopt :n 100})
-                                  iseqs)))])])]
-    (first invseq-per))
-
-
-  ;;;getting the name and filename associated
-  (io/with-out-writer "/home/peis/bin/gaisr/trainset3/file_to_name.txt"
-    (let [name-map (for [sto (fs/directory-files "/home/peis/bin/gaisr/trainset3/pos/" "-NC.sto")
-                         :let [gc-lines (first (join-sto-fasta-lines sto ""))
-                               id (first (filter #(re-find #"DE" %) gc-lines))]]
-                     [(fs/basename sto) (second (re-find #"^#=GF DE\s+(.*)" id))])]
-      (-> name-map
-          vec
-          clojure.pprint/pprint)))
-
-
-  ;;;find the % of robust seqs by function
-  (let [file "/home/kitia/bin/gaisr/robustness/compare-bpdist/robust-by-function.csv"
-        data (map (fn [line]
-                    (let [[function wt-neut invfold-neut name]
-                          (str/split #"," line)]
-                      [function 
-                       (Double/parseDouble wt-neut)
-                       (Double/parseDouble invfold-neut)
-                       name]))
-                  (-> file io/read-lines rest))]
-    ;;gets the percentage of robust sequences organized by
-    ;;function. the results are returned in as vectors
-    ;;[function total-seqs pos-percent neg-percent]
-    (map (fn [[function d]];[key=function val=data]
-           (let [N (count d)
-                 {pos true neg false} (group-by (fn [[_ wt inv _]]
-                                                  (>= wt inv))
-                                                d)]
-             [function N (map #(/ (count %) N) [pos neg])]))
-         (group-by first data)))
+  
   )
