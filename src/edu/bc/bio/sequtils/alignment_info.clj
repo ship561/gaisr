@@ -22,7 +22,7 @@
                     de (get-comment #"GF DE\s*(.*)")]
                 (assoc m (fs/basename sto) {:name de :type tp})))
             {}
-            (fs/directory-files (str fs/homedir "/bin/gaisr/trainset3/pos") "seed.sto")))
+            (fs/directory-files (str (fs/homedir) "/bin/gaisr/trainset3/pos") "seed.sto")))
 
 (defn alignment-quality
     "find the alignment quality for the negative training

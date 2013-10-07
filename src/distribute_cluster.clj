@@ -66,19 +66,29 @@
                  (conj v)))
           [] (vals bins)))
 
+(defn- command
+  "Function generates a string to use as a command when running the
+  function as a command line argument. any optional arguments such as
+  \" -dfn distfn\" can by added."
+
+  [function infiles workdir outfile & args]
+  (apply str
+         (str "lein run -m " function
+              " -f " "\"" infiles "\""
+              " -di " workdir
+              " -o " outfile
+              " -nc 16")
+         (map #(str " " % " ") args)))
+
 (defn- pbs-template
   "Currently used as a template for producing the pbs files for use on
   the shuffled data set in trainset3/shuffled"
 
-  [outpbs infiles workdir outfile function distfn]
+  [outpbs cmdstr]
   (let [template {:shell "#!/bin/bash"
                   :resource "#PBS -l mem=5gb,nodes=1:ppn=16,walltime=100:00:00"
                   :working-dir "#PBS -d /home/peis/bin/gaisr/"
-                  :command (str "lein run -m " function
-                                " -f " "\"" infiles "\""
-                                " -di " workdir
-                                " -dfn " distfn
-                                " -o " outfile " -nc 16")}]
+                  :command cmdstr}]
     (io/with-out-writer outpbs
       (println (template :shell))
       (println (template :resource))
@@ -110,10 +120,11 @@
                             ["-i" "--start" "start number for pbs file suffix"
                              :parse-fn #(Integer/parseInt %)
                              :default 0]
-                            ["-dfn" "--distfn" "distance function"
-                             :default "subopt-overlap-neighbors"]
                             ["-fn" "--function" "function to call in code"
                              :default "robustness/main-subopt-overlap"]
+                            ["-efn" "--extrafn" "function used as arguments in command ie
+                                                \"-efn subopt-overlap-neighbors\""
+                             :default nil]
                             ["-n" "--partition-number" "number of partitions to make"
                              :parse-fn #(Integer/parseInt %)
                              :default 10])
@@ -132,13 +143,13 @@
         pbs-to-submit (map (fn [i j flist]
                              (pbs-template (fs/join (opts :pdir)
                                                     (str/join "." [(opts :pbs) i "pbs"]))
-                                           flist
-                                           (if (opts :workdir)
-                                             (opts :workdir)
-                                             (-> (opts :file) first fs/dirname))
-                                           (str (opts :out) "." j ".out")
-                                           (opts :function)
-                                           (opts :distfn)))
+                                           (command (opts :function)
+                                                    flist
+                                                    (if (opts :workdir)
+                                                      (opts :workdir)
+                                                      (-> (opts :file) first fs/dirname))
+                                                    (str (opts :out) "." j ".out")
+                                                    (when (opts :extrafn) (opts :extrafn)))))
                            (iterate inc (opts :start))
                            (iterate inc 0)
                            parts)]
