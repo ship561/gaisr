@@ -23,7 +23,7 @@
         smith-waterman
         ))
 
-(def ^{:private true} homedir (edu.bc.fs/homedir))
+(def ^{:private true} homedir (fs/homedir))
 
 (defn mutant-neighbor
   "Takes a string s and finds the 3L 1-mer mutants. String can only
@@ -530,6 +530,8 @@
     [["-f" "--file" "REQUIRED. file(s) to check neutrality for"
       :parse-fn parse ;create list of files
       :default nil]
+     ["-inv" "--invfile-ext" "extension of inverse folded seqs file"
+      :default ".inv.clj"]
      ["-o" "--outfile" "REQUIRED. file to write to" :default nil]
      ["-di" "--dir" "dir in which files are located"
       :default nil]
@@ -569,7 +571,7 @@
                                 (-> (subopt-robustness insto
                                                        (opts :nseqs)
                                                        :ncore (opts :ncore)
-                                                       :invfile-ext ".walk.clj") 
+                                                       :invfile-ext (opts :invfile-ext)) 
                                     subopt-robustness-summary)])
                              instos))
                    data (if (and (fs/exists? ofile)

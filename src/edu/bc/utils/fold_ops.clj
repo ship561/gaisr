@@ -78,7 +78,7 @@
         ;;n 10
         s (.toUpperCase s)
         structures (do (declare fold)
-                       (fold s :foldtype "RNAsubopt" :n n))
+                       (fold s {:foldmethod :RNAsubopt :n n}))
         Z->centroid (fn [matrix] ;converts the list of subopt
                                 ;structures into a centroid
                       (sort-by key
@@ -111,8 +111,12 @@
     ))
 
 (ns-unmap 'edu.bc.utils.fold-ops 'fold2)
-(defmulti fold (fn [s & args]
-                  ((or (first args) {}) :foldmethod)))
+(defmulti fold "folds an RNA (s) into a structure using the method
+               specified by :foldmethod. possible :foldmethod
+               are :RNAfold, :RNAfoldp, :RNAsubopt, :centroid."
+  
+  (fn [s & args]
+    ((or (first args) {}) :foldmethod)))
 
 (defmethod fold :RNAfold [s args]
   (-> ((shell/sh "RNAfold"
