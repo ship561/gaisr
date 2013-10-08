@@ -271,19 +271,22 @@
    structures (neutrality)"
 
   [avg-subopt]
-  (let [rank (map (fn [[wt & muts]] ;rank each individual sequence
-                    (-> (remove #(< % wt) muts)
-                        count
-                        inc))
-                  (second avg-subopt))
-        [wt & muts]  (-> avg-subopt second transpose)
-        neutrality (map (fn [w m] ;;neut of each seq
-                          {:wt w :mut (mean muts)})
-                        wt muts)
+  (let [data (remove nil? (second avg-subopt))
+        rank (map (fn [[wt & muts]] ;rank each individual sequence
+                    {:rank (-> (remove #(< % wt) muts)
+                               count
+                               inc)
+                     :num (count muts)})
+                  data)
+        neutrality (map (fn [[wt & muts]] ;;neut of each seq
+                          {:wt wt :mut (mean muts)})
+                        data)
         robustness (map (fn [m] (> (m :wt) (m :mut))) neutrality)]
-    {:wt {:mean (-> wt mean) :sd (sd wt)}
-     :muts {:mean (-> muts flatten mean)
-            :sd (-> (map variance muts) mean Math/sqrt)}
+    {:wt (let [wt (first (transpose data))]
+           {:mean (-> wt mean) :sd (sd wt)})
+     :muts (let [muts (map rest data)]
+             {:mean (-> muts flatten mean)
+              :sd (-> (map variance muts) mean Math/sqrt)})
      :rank rank
      :neutrality neutrality
      :robust? robustness}))
@@ -312,22 +315,23 @@
                  nsubopt 1000
                  invfile-ext ".inv.clj"}}]
   (let [ ;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
-        inv-sto (fs/replace-type sto invfile-ext)
+        inv-sto (read-clj (fs/replace-type sto invfile-ext))
         {l :seqs cons :cons} (read-sto sto :info :both)
         cons (change-parens (first cons))
         ]
     [sto
      (map (fn [[nm s]]
-            (let [[s st cons-keys] (degap-conskeys s cons)
-                  inv-seq (take n (get (read-clj inv-sto) nm)) ;vector of n
-                     ;inverse-folded seqs
-                  neut (map (fn [x]
-                              (subopt-overlap-neighbors x st
-                                                        :ncore ncore
-                                                        :nsubopt nsubopt))
-                            (conj inv-seq s))]
-              ;;average %overlap for each wt and inv-fold seq
-              neut))
+            (when (get inv-sto nm)
+              (let [[s st cons-keys] (degap-conskeys s cons)
+                    inv-seq (take n (get inv-sto nm)) ;vector of n
+                                        ;inverse-folded seqs
+                    neut (map (fn [x]
+                                (subopt-overlap-neighbors x st
+                                                          :ncore ncore
+                                                          :nsubopt nsubopt))
+                              (conj inv-seq s))]
+                ;;average %overlap for each wt and inv-fold seq
+                neut)))
           l)]))
 
 ;;;-----------------------------------
@@ -554,9 +558,10 @@
   [& args]
   (let [[opts _ usage] (apply cli args banner)
         ofile (opts :outfile) ;storage location
-        infiles (if (opts :dir)
-                (map #(fs/join (opts :dir) %) (opts :file))
-                (opts :file))]
+        infiles (filter #(fs/exists? (fs/replace-type % (opts :invfile-ext)))
+                        (if (opts :dir)
+                          (map #(fs/join (opts :dir) %) (opts :file))
+                          (opts :file)))]
     (cond
      (opts :help) (print usage)
      (nil? args) (print usage)
