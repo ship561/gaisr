@@ -163,7 +163,7 @@
     ;;reduces it to a freqmap to
     ;;save memeory
     (frequencies (map (fn [ks]
-                        ;;percent overlap
+                        ;;percent overlap 
                         (dist cons-keys ks));dist(s,t)
                       substruct))))
 
@@ -323,8 +323,12 @@
      (map (fn [[nm s]]
             (when (get inv-sto nm)
               (let [[s st cons-keys] (degap-conskeys s cons)
-                    inv-seq (take n (get inv-sto nm)) ;vector of n
+                    inv-seq (remove (fn [iseq]
+                                      (let [[iseq target target-keys] (degap-conskeys iseq st)]
+                                        (empty? target-keys)))
+                                    (take n (get inv-sto nm))) ;vector of n
                                         ;inverse-folded seqs
+                    
                     neut (map (fn [x]
                                 (subopt-overlap-neighbors x st
                                                           :ncore ncore
