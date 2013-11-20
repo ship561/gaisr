@@ -5,6 +5,7 @@
             [clojure.set :as set]
             [edu.bc.fs :as fs])
   (:use [clojure.contrib.pprint :only (cl-format)]
+        edu.bc.utils
         edu.bc.utils.fold-ops
         edu.bc.bio.sequtils.files
         [edu.bc.utils.probs-stats :only (probs)]
@@ -324,3 +325,18 @@
   (if (fs/exists? f)
     (->> (slurp f) read-string )
     (throw+ {:msg "no such file" :file f})))
+
+(defn parse-dotps
+    "gets base pair probabilities from a dot.ps file f. the string is 1 based. "
+    
+    [f]
+    (->> (io/read-lines f)
+         doall
+         (drop-until #(re-find #"%start of base pair probability data" %) )
+         rest
+         (take-while #(re-find #"ubox" %))
+         (map (fn [x]
+                (let [[i j sqrt-prob _] (str/split #" " x)]
+                  [[(Integer/parseInt i) (Integer/parseInt j)]
+                   (sqr (Double/parseDouble sqrt-prob))])))
+         (into {})))

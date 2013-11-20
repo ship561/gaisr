@@ -255,7 +255,7 @@
      (apply str (repeatedly L #(markov-step base-probs)))))
 
 (defn plasticity [s]
-  (/ (* 2 (fold2 s {:foldmethod :RNAfoldp}) )
+  (/ (* 2 (fold s {:foldmethod :RNAfoldp}) )
      (count s)))
 
 (defn perfect-struct?
@@ -494,20 +494,31 @@
   
   
 
-  (defn parse-dotps
-    "gets base pair probabilities from a dot.ps file f. the string is 1 based. "
-    
-    [f]
-    (->> (io/read-lines "/home/kitia/dot.ps") 
-         (drop-until #(re-find #"%data starts here" %) )
-         rest
-         (take-while #(re-find #"ubox" %))
-         (map (fn [x]
-                (let [[i j sqrt-prob _] (str/split #" " x)]
-                  [[(Integer/parseInt i) (Integer/parseInt j)]
-                   (sqr (Double/parseDouble sqrt-prob))])))))
-
   
+
+  (defn expected-subopt-overlap
+    "finds the expected suboptimal overlap between 2 sequences using
+    (sum(Ps(i,j)*Pt(i,j)))/(mean #bps in Ps)"
+
+    [s1 s2]
+    (let [P (fn [s]
+              (fold s {:foldmethod :RNAfoldp})
+              (edu.bc.bio.sequtils.snippets-files/parse-dotps "dot.ps"))
+          Ps (P s1)
+          Pt (P s2)
+          pairs (set (sets/union (keys Ps) (keys Pt)))]
+      (/ (reduce #(+ %1
+                     (* (get Ps %2 0)
+                        (get Pt %2 0)))
+                 0 pairs)
+         (sum Ps)))) ;expected number of base pairs
+
+  (defn expected-subopt-overlapsomething
+    "finds the neutrality of a wt sequence s by using the expected-subopt-overlap"
+
+    [s _ & args]
+    (let [neighbors (robustness/mutant-neighbor s)]
+      (mean (map #(expected-subopt-overlap s %) neighbors))))
 
   (defn rankscore [i coll]
     (let [r (-> (remove #(> i %) coll)
@@ -603,6 +614,61 @@
              (merge-with #(-> (concat %1 %2) distinct vec) mseqs)
              pp/pprint)))) ;merge with existing
 
+  ;;;figure out bpdist between a wt seq and its invfolded seqs
+(let [fdir "/home/peis/bin/gaisr/trainset3/pos/"
+                  files (fs/directory-files fdir "-NC.sto")
+                  invcljs (map #(fs/replace-type % ".walk.clj") files)]
+              (pxmap (fn [f invclj]
+                       (when (fs/exists? invclj)
+                         (let [{inseqs :seqs cons :cons} (read-sto f :info :both)
+                               cons (-> cons first change-parens)
+                               invclj (read-clj invclj)]
+                           [(fs/basename f)
+                            (for [[nm s] inseqs
+                                  iseq (invclj nm)
+                                  :when iseq
+                                  :let [[s st] (degap-conskeys s cons)
+                                        ist (fold iseq)]]
+                              (bpdist st ist :bpdist true))])))
+                     10
+                     (take 1 files) invcljs))
 
-  
+(let [bpdist-t2 (into {} bpdist-wt-vs-background-trainset2)
+      bpdist-t3 (into {} bpdist-wt-vs-background)]
+  (io/with-out-writer "/home/peis/bin/gaisr/robustness/compare-neutrality/bpdist-target-vs-background.csv"
+    (println "sto name,dist to target trainset2, dist to target trainset3, id, function")
+    (doseq [kt3 (keys bpdist-t3)
+            :let [kt2 (str (re-find #"RF\d+.seed" kt3) ".7.sto")
+                  dist (map vector 
+                            (concat (bpdist-t2 kt2)
+                                    (repeat ".")) 
+                            (bpdist-t3 kt3))
+                  {id :name funct :type} (edu.bc.bio.sequtils.alignment-info/lookup-sto-function kt3)
+                  funct (apply str funct)]
+            d dist]
+      (->> (vector kt3 d id funct) 
+           flatten
+           (str/join ",") println))))
+
+(let [s1 "GGGGAAAACCCC"
+      s2 "GGGGAAACCCCC"
+      ]
+  [(expected-subopt-overlap s1 s2)
+   (->> (for [i (fold s1 {:foldmethod :RNAsubopt :n 100})
+              :let [st (set (keys (struct->matrix i)))]]
+          (robustness/subopt-overlap-seq s2 st 100))
+        (apply merge-with +)
+        mean)])
+
+;;;test out the expected suboptimal overlap function
+(def foo (future (main-subopt-overlap "-f" (str/join " " (fs/directory-files "/home/peis/bin/gaisr/trainset3/neg/5prime/" "-5prime.sto")) "-dfn" "expected-subopt-overlapsomething" "-o" "/home/peis/bin/gaisr/robustness/compare-neutrality/expected-subopt-5prime-neg.clj" "-nc" "1")))
+
+(defn clj->csv [infile]
+  (doseq [[nm neuts] (read-clj infile)
+          neut neuts
+          :let [nm (fs/basename nm)
+                {id :name funct :type}  (edu.bc.bio.sequtils.alignment-info/lookup-sto-function nm)
+                funct (apply str funct)
+                csv [nm neut "expected-subopt-pos" id funct "expected-subopt"]]]
+    (println (str/join "," csv))))
   )

@@ -24,6 +24,15 @@
             {}
             (fs/directory-files (str (fs/homedir) "/bin/gaisr/trainset3/pos") "seed.sto")))
 
+(defn lookup-sto-function
+  "takes a sto name and returns the ID and function in a map with
+  keywords :name and :type"
+  
+  [sto]
+  (let [nm (str (re-find #"RF\d+.seed" sto)
+                ".sto")]
+    (parse-sto-function nm)))
+
 (defn alignment-quality
     "find the alignment quality for the negative training
     examples. returns the fraction of base-pairs to the entire

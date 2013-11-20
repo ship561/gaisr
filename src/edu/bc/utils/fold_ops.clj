@@ -111,9 +111,13 @@
     ))
 
 (ns-unmap 'edu.bc.utils.fold-ops 'fold2)
-(defmulti fold "folds an RNA (s) into a structure using the method
+(defmulti fold
+
+  ^{:doc "folds an RNA (s) into a structure using the method
                specified by :foldmethod. possible :foldmethod
                are :RNAfold, :RNAfoldp, :RNAsubopt, :centroid."
+    :arglists '([s & args])}
+    
   
   (fn [s & args]
     ((or (first args) {}) :foldmethod)))

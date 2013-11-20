@@ -15,7 +15,8 @@
         edu.bc.utils.probs-stats
         [edu.bc.utils.snippets-math :only (median-est)]
         [edu.bc.bio.sequtils.snippets-files
-         :only (read-sto change-parens sto->randsto read-clj)]
+         :only (read-sto change-parens sto->randsto read-clj
+                         parse-dotps)]
         edu.bc.utils.fold-ops
         [incanter.core :only (view)]
         invfold
@@ -93,6 +94,27 @@
                            (- 1 (pearson-correlation stvec mutst))))
                    0)))]
     (mean (pxmap dist ncore neighbors))))
+
+(defn expected-subopt-overlapsomething
+    "finds the neutrality of a wt sequence s by using the expected-subopt-overlap"
+
+    [s _ & args]
+    (let [expected-subopt-overlap
+          (fn [s1 s2]
+            (let [P (fn [s]
+                      (fold s {:foldmethod :RNAfoldp})
+                      (parse-dotps "dot.ps"))
+                  Ps (P s1)
+                  Pt (P s2)
+                  pairs (set (sets/union (keys Ps) (keys Pt)))]
+              (/ (reduce #(+ %1
+                             (* (get Ps %2 0)
+                                (get Pt %2 0)))
+                         0 pairs)
+                 (sum Ps))))
+          s (str/replace-re #"[\.\-]" "" s)
+          neighbors (robustness/mutant-neighbor s)]
+      (mean (map #(expected-subopt-overlap s %) neighbors))))
 
 (defn generic-dist-sto
   "Takes a sto, distance function and optional args. Uses the distance
