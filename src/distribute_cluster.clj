@@ -70,7 +70,7 @@
   "Currently used as a template for producing the pbs files for use on
   the shuffled data set in trainset3/shuffled"
 
-  [outpbs infiles workdir outfile function distfn]
+  [outpbs infiles workdir outfile function distfn ncore]
   (let [template {:shell "#!/bin/bash"
                   :resource "#PBS -l mem=5gb,nodes=1:ppn=16,walltime=100:00:00"
                   :working-dir "#PBS -d /home/peis/bin/gaisr/"
@@ -78,7 +78,8 @@
                                 " -f " "\"" infiles "\""
                                 " -di " workdir
                                 " -dfn " distfn
-                                " -o " outfile " -nc 16")}]
+                                " -o " outfile
+                                " -nc " ncore)}]
     (io/with-out-writer outpbs
       (println (template :shell))
       (println (template :resource))
@@ -116,7 +117,10 @@
                              :default "robustness/main-subopt-overlap"]
                             ["-n" "--partition-number" "number of partitions to make"
                              :parse-fn #(Integer/parseInt %)
-                             :default 10])
+                             :default 10]
+                            ["-nc" "--ncores" "number of cores to use per partition"
+                             :parse-fn #(Integer/parseInt %)
+                             :default 16])
         work-files (if (opts :workdir)
                      (map #(fs/join (opts :workdir) %) (opts :file))
                      (opts :file))
@@ -138,7 +142,8 @@
                                              (-> (opts :file) first fs/dirname))
                                            (str (opts :out) "." j ".out")
                                            (opts :function)
-                                           (opts :distfn)))
+                                           (opts :distfn)
+                                           (opts :ncores)))
                            (iterate inc (opts :start))
                            (iterate inc 0)
                            parts)]
