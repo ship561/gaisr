@@ -71,22 +71,22 @@
   function as a command line argument. any optional arguments such as
   \" -dfn distfn\" can by added."
 
-  [function infiles workdir outfile & args]
+  [function infiles workdir outfile ncore & args]
   (apply str
          (str "lein run -m " function
               " -f " "\"" infiles "\""
               " -di " workdir
               " -o " outfile
-              " -nc 16")
+              " -nc " ncore)
          (map #(str " " % " ") args)))
 
 (defn- pbs-template
   "Currently used as a template for producing the pbs files for use on
   the shuffled data set in trainset3/shuffled"
 
-  [outpbs cmdstr]
+  [outpbs cmdstr ncore]
   (let [template {:shell "#!/bin/bash"
-                  :resource "#PBS -l mem=5gb,nodes=1:ppn=16,walltime=100:00:00"
+                  :resource (str "#PBS -l mem=5gb,nodes=1:ppn=" ncore ",walltime=100:00:00")
                   :working-dir "#PBS -d /home/peis/bin/gaisr/"
                   :command cmdstr}]
     (io/with-out-writer outpbs
@@ -123,11 +123,14 @@
                             ["-fn" "--function" "function to call in code"
                              :default "robustness/main-subopt-overlap"]
                             ["-efn" "--extrafn" "function used as arguments in command ie
-                                                \"-efn subopt-overlap-neighbors\""
+                                                \"-dfn subopt-overlap-neighbors\""
                              :default nil]
                             ["-n" "--partition-number" "number of partitions to make"
                              :parse-fn #(Integer/parseInt %)
-                             :default 10])
+                             :default 10]
+                            ["-nc" "--ncore" "number of cores to use per partition"
+                             :parse-fn #(Integer/parseInt %)
+                             :default 16])
         work-files (if (opts :workdir)
                      (map #(fs/join (opts :workdir) %) (opts :file))
                      (opts :file))
@@ -149,7 +152,9 @@
                                                       (opts :workdir)
                                                       (-> (opts :file) first fs/dirname))
                                                     (str (opts :out) "." j ".out")
-                                                    (when (opts :extrafn) (opts :extrafn)))))
+                                                    (opts :ncore)
+                                                    (when (opts :extrafn) (opts :extrafn)))
+                                           (opts :ncore)))
                            (iterate inc (opts :start))
                            (iterate inc 0)
                            parts)]
