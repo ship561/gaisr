@@ -54,7 +54,7 @@
                         :name (conj v nm)
                         :data (conj v sq))))
                    [] seq-lines)]
-    (-> sl rest butlast vec)))
+    (->> sl rest )))
 
 (defn- valid-seq-struct
   "Checks the sqs (list of sequences) to make sure that all sequences
@@ -149,7 +149,7 @@
           (throw+ {:error (call :err)})
           aln-out)))))
 
-(defn- print-sto
+(defn print-sto
   "takes sequence lines and a structure line and writes it into a sto
   format file. the seq-lines needs to be a collection of [name
   sequence] pairs. structure is a string. Simply prints out to the
@@ -167,7 +167,7 @@
 
 ;;;(ns-unmap 'edu.bc.bio.sequtils.snippets-files 'aln->sto)
 (defmulti aln->sto (fn [in-aln out-sto & args]
-                     (let [args (first args)]
+                     (when-let [args (first args)]
                        [(type (args :st)) (args :foldmethod)])))
 
 (defmethod aln->sto [String :RNAalifold] [in-aln out-sto args]

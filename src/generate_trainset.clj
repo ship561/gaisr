@@ -92,7 +92,7 @@
          (map (fn [[nm [_ sq]]] [nm sq]) );only return name and seq
          )))
 
-(defn sto->subset-sto
+(defn sto->nsubset-stos
   "takes a sto input file and generates n subset sto that contains a
   subset (3-6) of the sequences from the original sto. An aln file is
   first made, then the aln is converted to sto format. Returns a list
@@ -100,7 +100,7 @@
 
   [insto n]
   (let [[_ seq-lines cons-lines] (join-sto-fasta-lines insto "")
-        subset (->> (repeatedly #(-> (randnseqs seq-lines (+ (rand-int 4) 3))
+        subset (->> (repeatedly #(-> (randnseqs seq-lines (rand-nth (range 3 7)))
                                      degap-aln))
                     (filter #(apply distinct? %) ) ;elements of subset distinct
                     distinct) ;subsets are distinct
@@ -131,19 +131,18 @@
 
   Usually use trainset/neg or trainset/ (for pos)."
 
-  [indir outdir]
-  (doseq [f (->> indir
-                 (fs/listdir )
-                 (filter #(re-find #".sto$" %) )) ;;use trainset/list2 or trainset/neg/list-sto-only
+  [indir outdir file-type]
+  (doseq [f (fs/directory-files indir file-type) ;;use trainset/list2 or trainset/neg/list-sto-only
           ]
     (let [c (atom 0)
-          seq-lines (read-seqs (str indir f))
+          seq-lines (read-seqs f)
+          fnm (fs/basename f)
           ;;f "RF01693-seed.sto"
           ]
       (if (>= (nCk (count seq-lines) 3) 10)
-        (doseq [subset (sto->subset-sto (str indir f) 10)]
+        (doseq [subset (sto->nsubset-stos f 10)]
           (prn c f)
-          (fs/copy subset (str outdir (subs f 0 (- (count f) 3)) @c ".sto"))
+          (fs/copy subset (str outdir (subs fnm 0 (- (count fnm) 3)) @c ".sto"))
           (swap! c inc)
           (fs/rm subset))
         (println f "did not work. too few sequences")
@@ -159,8 +158,6 @@
             s stos]
       (let [fasta (str (subs s 0 (- (count s) 3)) "fasta")]
         (sto->fasta (str d s) (str d fasta))))))
-
-
 
 
 
