@@ -18,42 +18,22 @@
   [file-list nbins]
   (let [file-lines (map (fn [f]
                           [(fs/basename f) (count (read-seqs f :info :names))]) 
-                        file-list)]
-    (prn file-lines)
-    (loop [lim 30
-           bins (reduce (fn [m [n files]]
-                          (assoc m (* n (count files)) files))
-                        {} (group-by second file-lines))]
-      (cond
-       (and (> (count bins) nbins)
-            (pos? lim))
-       (let [mk (apply min-key key bins) ;smallest key
-             mk2 (apply min-key key (dissoc bins (first mk)));2nd smallest key
-             new-bins (dissoc bins -1 (first mk) (first mk2))
-             new-val (concat (second mk) (second mk2))
-             new-key (apply + (map second new-val))]
-         ;;if new-key exists then new-key=-1 and is dealt with
-         ;;next round
-         (recur (dec lim)
-                (assoc new-bins (if (contains? new-bins new-key) -1 new-key) new-val)))
-
-       #_(and (< (count bins) nbins)
-            (pos? lim))
-       #_(let [mk (apply max-key key bins) ;smallest key
-             new-bins (dissoc bins Long/MAX_VALUE (first mk))
-             [new-val1 new-val2] (partition-all (/ (count (second mk)) 3) (second mk))
-             new-key1 (apply + (map second new-val1))
-             new-key2 (apply + (map second new-val2))
-             [new-key1 new-key2] (if (= new-key1 new-key2)
-                                   [Integer/MAX_VALUE (dec Integer/MAX_VALUE)]
-                                   [new-key1 new-key2])]
-         ;;if new-key exists then new-key=-1 and is dealt with
-         ;;next round
-         (recur (dec lim)
-                (assoc new-bins (if (contains? new-bins new-key1) Long/MAX_VALUE new-key1) new-val1
-                       (if (contains? new-bins new-key2) (dec Long/MAX_VALUE) new-key2) new-val2)))
-       :else
-       bins))))
+                        file-list)
+        bins (map (fn [x] [(second x) [x]]) (take nbins file-lines))]
+    (loop [current-bins (sort-by first bins)
+           remaining-files (drop nbins file-lines)]
+      (if (seq remaining-files)
+        (let [i (first remaining-files)
+              j (second (first current-bins))]
+          ;;(prn :remaining i :cbins j) 
+          (recur (let [update-bin (conj j i)
+                       cnt (sum (map second update-bin))]
+                   ;;(prn :update update-bin :cnt cnt)
+                   (->> [cnt update-bin]
+                        (conj (rest current-bins))
+                        (sort-by first )))
+                 (rest remaining-files)))
+        current-bins))))
 
 
 (defn- create-file-list
@@ -61,10 +41,11 @@
   
   [bins]
   (reduce (fn [v seqbin]
-            (->> (map first seqbin)
+            (->> (second seqbin)
+                 (map first)
                  (str/join " " )
                  (conj v)))
-          [] (vals bins)))
+          [] bins))
 
 (defn- command
   "Function generates a string to use as a command when running the
@@ -99,7 +80,7 @@
 (defn combin-output [prefix out-file]
   (let [data (->> (str prefix ".\\d.out")
                   re-pattern 
-                  (fs/re-directory-files "/home/peis/bin/gaisr/" )
+                  (fs/re-directory-files (fs/join (fs/homedir) "bin/gaisr"))
                   (remove fs/empty? )
                   (mapcat read-clj ))]
     (io/with-out-writer out-file (prn (vec data)))))
