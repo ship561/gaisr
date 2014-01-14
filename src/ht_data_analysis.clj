@@ -514,7 +514,7 @@
 
   [in out blastdb]
   (blastn in :out out
-          :blastdb (fs/join "/home/peis/S15SELEXHTSblastdb/" blastdb)
+          :blastdb blastdb
           :word-size 5
           :misc "-reward 1 -penalty -1 -gapopen 3 -gapextend 2 -num_threads 25 -dbsize 590400800"
           :fmt "10 qseqid qstart qend evalue nident sseqid sstart send"))
