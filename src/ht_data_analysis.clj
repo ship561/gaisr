@@ -573,7 +573,7 @@
                                  "lein run -m ht-data-analysis/main-blast-driver"
                                  " -f " "\"" in "\""
                                  " -o " (str out "." i ".out")
-                                 " -db " (str "/home/peis/S15SELEXHTSblastdb/s15SELEXHTSfiltered." i)
+                                 " -db " (str blastdb "." i)
                                  )}
              outpbs (str (fs/join (opts :pdir) (opts :pbs)) "." i ".pbs")]
          (println opts)
