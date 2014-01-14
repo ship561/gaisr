@@ -544,7 +544,8 @@
       (print usage)
       (do (blast-hts-wrapper in out blastdb)
           (io/with-out-writer (fs/replace-type out ".filtered.out")
-            (doseq [i (filter-blast-results)]))))))
+            (doseq [i (filter-blast-results out)]
+              (println i)))))))
 
 (defn pbs-blast-driver
 
