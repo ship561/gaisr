@@ -332,10 +332,11 @@
    %overlap-between-cons-and-suboptimal-structure for each
    sequence (cons wt muts)"
 
-  [sto n & {:keys [ncore nsubopt invfile-ext]
+  [sto n & {:keys [ncore nsubopt invfile-ext distfun]
             :or {ncore 5
                  nsubopt 1000
-                 invfile-ext ".inv.clj"}}]
+                 invfile-ext ".inv.clj"
+                 distfun subopt-overlap-neighbors}}]
   (let [ ;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
         inv-sto (read-clj (fs/replace-type sto invfile-ext))
         {l :seqs cons :cons} (read-sto sto :info :both)
@@ -352,9 +353,8 @@
                                         ;inverse-folded seqs
                     
                     neut (map (fn [x]
-                                (subopt-overlap-neighbors x st
-                                                          :ncore ncore
-                                                          :nsubopt nsubopt))
+                                (apply distfun s cons
+                                       [:ncore ncore :nsubopt nsubopt :bp bp]))
                               (conj inv-seq s))]
                 ;;average %overlap for each wt and inv-fold seq
                 neut)))
@@ -498,15 +498,20 @@
   should be a clj data structure. The function appends the data in csv
   format to a specific csv"
 
-  [data label]
-  (let [outcsv "/home/peis/bin/gaisr/robustness/compare-neutrality/neutrality-distribution-trainset3.csv"]
+  [data dist-metric trainset outcsv]
+  (let [;outcsv
+        ;"/home/peis/bin/gaisr/robustness/compare-neutrality/neutrality-distribution-trainset3.csv"
+        ]
     (edu.bc.utils.snippets-utils/with-out-appender  outcsv
       (doseq [[filename vs] data
               v vs ;neutrality value
               :let [sto (fs/basename filename)
-                    {nm :name type :type} (-> (str (re-find #"RF\d+\-seed" sto) ".sto")
-                                              edu.bc.bio.sequtils.alignment-info/parse-sto-function )]]
-        (println (str/join "," [sto v label nm (apply str type)]))))))
+                    {nm :name type :type}
+                    (-> (str (re-find #"RF\d+\-seed" sto) ".sto")
+                        edu.bc.bio.sequtils.alignment-info/parse-sto-function )]]
+        (->> [sto v trainset nm (apply str type) dist-metric]
+             (str/join "," )
+             println)))))
 
 ;;;---------------------------------------------------
 
@@ -565,6 +570,9 @@
      ["-o" "--outfile" "REQUIRED. file to write to" :default nil]
      ["-di" "--dir" "dir in which files are located"
       :default nil]
+     ["-dfn" "--distfn" "distance function"
+      :parse-fn #(->> % symbol (ns-resolve 'robustness))
+      :default subopt-overlap-neighbors]
      ["-d" "--debug" :default nil :flag true]
      ["-n" "--nseqs" "number of inverse seqs to create"
       :parse-fn #(Integer/parseInt %) :default 100]
@@ -602,7 +610,8 @@
                                 (-> (subopt-robustness insto
                                                        (opts :nseqs)
                                                        :ncore (opts :ncore)
-                                                       :invfile-ext (opts :invfile-ext)) 
+                                                       :invfile-ext (opts :invfile-ext)
+                                                       :distfun (opts :distfn)) 
                                     subopt-robustness-summary)])
                              instos))
                    data (if (and (fs/exists? ofile)
@@ -1275,6 +1284,14 @@
      (io/with-out-writer outcsv
        (println "file name,neutrality,distance measure,ID,function,distance metric")
        (outfn)))))
+
+
+
+
+
+
+
+
 )
 
 
