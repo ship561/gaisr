@@ -332,11 +332,12 @@
    %overlap-between-cons-and-suboptimal-structure for each
    sequence (cons wt muts)"
 
-  [sto n & {:keys [ncore nsubopt invfile-ext distfun]
+  [sto n & {:keys [ncore nsubopt invfile-ext distfun bp]
             :or {ncore 5
                  nsubopt 1000
                  invfile-ext ".inv.clj"
-                 distfun subopt-overlap-neighbors}}]
+                 distfun subopt-overlap-neighbors
+                 bp true}}]
   (let [ ;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
         inv-sto (read-clj (fs/replace-type sto invfile-ext))
         {l :seqs cons :cons} (read-sto sto :info :both)
