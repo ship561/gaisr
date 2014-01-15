@@ -512,7 +512,8 @@
 
 (defn blast-hts-wrapper
 
-  [in out blastdb]
+  [in out blastdb & {:keys [blast-path]
+                     :or {blast-path (get-tool-path :ncbi)}}]
   (blastn in :out out
           :blastdb blastdb
           :word-size 5
@@ -534,7 +535,9 @@
   (let [[opts _ usage] (cli args
                             ["-f" "--file" "queries to blast" :default nil]
                             ["-o" "--outfile" "blast output" :default nil]
-                            ["-db" "--blastdb" "blastdb to search" :default nil])
+                            ["-db" "--blastdb" "blastdb to search" :default nil]
+                            ["-bp" "--blastpath" "blast path"
+                             :default (get-tool-path :ncbi)])
         in (opts :file)
         out (opts :outfile)
         blastdb (opts :blastdb)]
@@ -542,7 +545,7 @@
               (opts :help)
               (some nil? args))
       (print usage)
-      (do (blast-hts-wrapper in out blastdb)
+      (do (blast-hts-wrapper in out blastdb (opts :blastpath))
           (io/with-out-writer (fs/replace-type out ".filtered.out")
             (doseq [i (filter-blast-results out)]
               (println i)))))))
@@ -557,7 +560,9 @@
                             ["-di" "--pdir" "dir in which to produce pbs files"
                              :default nil]
                             ["-p" "--pbs" "prefix for pbs files to produce"
-                             :default nil])
+                             :default nil]
+                            ["-bp" "--blastpath" "blast path"
+                             :default (get-tool-path :ncbi)])
         in (opts :file)
         out (opts :outfile)
         blastdb (opts :blastdb)]
@@ -575,6 +580,7 @@
                                  " -f " "\"" in "\""
                                  " -o " (str out "." i ".out")
                                  " -db " (str blastdb "." i)
+                                 " -bp " (opts :blastpath)
                                  )}
              outpbs (str (fs/join (opts :pdir) (opts :pbs)) "." i ".pbs")]
          (println opts)

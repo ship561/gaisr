@@ -67,14 +67,15 @@
    :fmt "10 qseqid qstart qend evalue sseqid sstart send"
    :misc nil
    :fn nil
-   :fnargs nil]
+   :fnargs nil
+   :blast-path  (get-tool-path :ncbi)]
   (let [seqin       (fs/fullpath in)
         blast-out   (or (and out (fs/fullpath out))
                         (str seqin ".blast"))
         seq-blastdb (or (and blastdb (fs/fullpath blastdb))
                         default-binary-db)
 
-        blast-path  (get-tool-path :ncbi)
+        
         [blastn
          tblastn]   (map #(str blast-path %) '("blastn" "tblastn"))
 
@@ -84,7 +85,7 @@
                      "-evalue" (str evalue)]
         fmt-args    ["-outfmt" fmt]
         misc-args   (if misc (str/split #" " misc) [])]
-
+    
     (assert-tools-exist [blastn tblastn])
     
     (case pgm
