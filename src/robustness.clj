@@ -6,6 +6,7 @@
             [incanter.charts :as charts]
             ;;[clojure.contrib.json :as json]
             [clojure.set :as sets]
+            [clojure.core.reducers :as r]
             [edu.bc.utils.snippets-utils]
             [edu.bc.bio.sequtils.alignment-info])
   (:use [clojure.tools.cli :only [cli]]
@@ -25,6 +26,11 @@
         ))
 
 (def ^{:private true} homedir (fs/homedir))
+
+(def ^:dynamic *globals*
+  {:nsamples 1000
+   :ncore 6
+   :bpdist true})
 
 (defn mutant-neighbor
   "Takes a string s and finds the 3L 1-mer mutants. String can only
@@ -56,6 +62,24 @@
         cons-keys (set (keys (struct->matrix st)))]
     [s st cons-keys]))
 
+(defn  build-mut-neighbors
+  "Takes a state [wt st conskeys] and returns a new state containing
+  the mutant neighbors"
+
+  [[wt st conskeys]]
+  [wt (mutant-neighbor wt) st conskeys])
+
+(defn calculate-dist
+
+  [[wt muts st conskeys] distfn]
+  (let [state [wt st conskeys]]
+    (r/fold 15
+            (fn ([] [])
+              ([l r] (concat l r)))
+            (fn ([] [])
+              ([V i]
+                 (conj V (distfn state i))))
+            (vec muts))))
 ;;;-----------------------------------------------------------------------------
 ;;;
 ;;;other methods for finding neutrality
@@ -76,6 +100,20 @@
                        len)))]
     (mean (map dist neighbors))))
 
+(defn bpsomething2
+  "uses the <1-d/L> method mentioned in Borenstein miRNA
+  paper. Distance measured from given structure"
+  
+  [df neighbor]
+  (let [st (second df)
+        bp (*globals* :bpdist)
+        len (count st)
+        dist (fn [neighbor]
+               (- 1
+                  (/ (bpdist st (fold neighbor) :bpdist bp)
+                     len)))]
+    (dist neighbor)))
+
 (defn pccsomething
   "uses the pearsons correlation coefficient comparing the wt
   structure to the mutant structure to find the disruption to the
@@ -94,6 +132,23 @@
                            (- 1 (pearson-correlation stvec mutst))))
                    0)))]
     (mean (pxmap dist ncore neighbors))))
+
+(defn pccsomething2
+  "uses the pearsons correlation coefficient comparing the wt
+  structure to the mutant structure to find the disruption to the
+  structure. Returns a value bounded by [0 1]."
+
+  [df neighbor]
+  (let [n (*globals* :nsamples)
+        [s st] df
+        stvec (map #(if (= \. %) 0 1) (seq st))
+        dist (fn [neighbor]
+               (let [mutst (second (suboptimals neighbor n))]
+                 (if (not-every? zero? mutst)
+                   (- 1 (* 0.5
+                           (- 1 (pearson-correlation stvec mutst))))
+                   0)))]
+    (dist neighbor)))
 
 (defn expected-subopt-overlapsomething
     "finds the neutrality of a wt sequence s by using the expected-subopt-overlap"
@@ -133,6 +188,23 @@
              (apply distfun s cons
                     [:ncore ncore :nsubopt nsubopt :bp bp]))
            l))]))
+
+(defn generic-dist-sto2
+  "Takes a sto, distance function and optional args. Uses the distance
+  function to find the mean distance of the sequences in the sto to
+  their 1-mutant neighbors, respectively. "
+
+  [sto distfn]
+  (let [{l :seqs cons :cons} (read-sto sto :info :both)
+        cons (change-parens (first cons))
+        ]
+    (as-> l data
+          (r/map #(degap-conskeys (second %) cons) data) 
+          (r/map build-mut-neighbors data)
+          (r/map #(calculate-dist % distfn) data)
+          (r/map mean data)
+          (into [] data)
+          [sto data])))
 
 ;;;-----------------------------------------------------------------------------
 ;;;
@@ -188,6 +260,30 @@
                         ;;percent overlap 
                         (dist cons-keys ks));dist(s,t)
                       substruct))))
+
+(defn subopt-seq
+  "Determine the percent overlap of each n suboptimal structure of a
+  sequence s to the consensus structure (cons-keys). compares against
+  n suboptimal structures.  returns a frequency map where k=dist and
+  v=frequency.
+
+  average is subopt overlap"
+
+  [df mut]
+  (let [n (*globals* :nsamples)
+        cons-keys (third df)
+        [_ substruct] (suboptimals mut n :centroid-only false)
+        dist (fn [st1 st2]
+               (/ (count (sets/intersection st1
+                                            (set (keys st2))))
+                  (count st1)))]
+    ;;takes percent overlap and
+    ;;reduces it to a freqmap to
+    ;;save memeory
+    (->> substruct
+         (map #(dist cons-keys %))
+         frequencies
+         mean)))
 
 (defn subopt-overlap-neighbors
   "Finds nsubopt suboptimal structures and then finds the percent
@@ -354,13 +450,51 @@
                                         ;inverse-folded seqs
                     
                     neut (map (fn [x]
-                                (apply distfun s cons
-                                       [:ncore ncore :nsubopt nsubopt :bp bp]))
+                                (subopt-overlap-neighbors x st
+                                                          :ncore ncore
+                                                          :nsubopt nsubopt))
                               (conj inv-seq s))]
                 ;;average %overlap for each wt and inv-fold seq
                 neut)))
           l)]))
 
+(defn generic-robustness-sto
+  "Takes an input sto and estimates the significance of the robustness
+   of the sequence. Takes a sequence and the consensus structure and
+   generates n sequences with similar structure. Then finds the
+   neutrality of each inverse-folded sequence. Returns the average
+   %overlap-between-cons-and-suboptimal-structure for each
+   sequence (cons wt muts)"
+
+  [sto n & {:keys [ncore nsubopt invfile-ext distfn bp]
+            :or {ncore 5
+                 nsubopt 1000
+                 invfile-ext ".inv.clj"
+                 distfn subopt-seq
+                 bp true}}]
+  (let [ ;sto "/home/kitia/bin/gaisr/trainset2/pos/RF00555-seed.1.sto"
+        inv-sto (read-clj (fs/replace-type sto invfile-ext))
+        {l :seqs cons :cons} (read-sto sto :info :both)
+        cons (change-parens (first cons))
+        ]
+    [sto
+     (map (fn [[nm s]]
+            (when (get inv-sto nm)
+              (let [[s st conskeys] (degap-conskeys s cons)
+                    inv-seq (->> (get inv-sto nm)
+                                 (remove (fn [iseq]
+                                           (let [[iseq target target-keys]
+                                                 (degap-conskeys iseq st)]
+                                             (empty? target-keys))))
+                                 (take n))]
+                (map (fn [s]
+                       (as-> [s st conskeys] state
+                             (build-mut-neighbors state)
+                             (calculate-dist state distfn)
+                             (mean state)))
+                     (conj inv-seq s))
+                )))
+          l)]))
 ;;;-----------------------------------
 ;;;Section for visualizing data
 (defn seq-neutrality
