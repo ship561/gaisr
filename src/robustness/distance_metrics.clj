@@ -3,6 +3,8 @@
             [clojure.set :as sets]
             )
   (:use edu.bc.bio.seq-utils
+        [edu.bc.bio.sequtils.snippets-files
+         :only (parse-dotps)]
         edu.bc.utils
         edu.bc.utils.probs-stats
         edu.bc.utils.fold-ops                

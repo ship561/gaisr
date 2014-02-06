@@ -188,7 +188,7 @@
      ["-di" "--dir" "dir in which files are located"
       :default nil]
      ["-dfn" "--distfn" "distance function"
-      :parse-fn #(->> % symbol (ns-resolve 'robustness))
+      :parse-fn #(->> % symbol (ns-resolve 'robustness.neutrality))
       :default subopt-overlap-neighbors]
      ["-d" "--debug" :default nil :flag true]
      ["-n" "--nseqs" "number of inverse seqs to create"
