@@ -5,18 +5,48 @@
             [edu.bc.fs :as fs])
   (:use refold
         [edu.bc.bio.sequtils.files :only [join-sto-fasta-file]]
-        [slingshot.slingshot :only [throw+]]))
+        [slingshot.slingshot :only [throw+]]
+        [edu.bc.utils :only [assert-tools-exist getenv]
+         :exclude [get-tool-path]]))
 
-(def param-file (let [viennadir (if (fs/directory? "/usr/local/ViennaRNA/")
-                                  "/usr/local/ViennaRNA/" 
-                                  (fs/join (fs/homedir) "/bin/ViennaRNA/"))
-                      pfile (str viennadir "rna_andronescu2007.par")
+(def ^{:private true} viennadir
+  (if (fs/directory? "/usr/local/ViennaRNA/")
+    "/usr/local/ViennaRNA/" 
+    (fs/join (fs/homedir) "/bin/ViennaRNA/")))
+
+(def param-file (let [pfile (str viennadir "rna_andronescu2007.par")
                       pfile (if (fs/exists? pfile)
                               pfile
                               (str viennadir "misc/rna_andronescu2007.par"))]
                   (if (fs/exists? pfile)
                     pfile
                     (throw+ {:file pfile} "parameter file not exist" ))))
+
+(defn get-tool-path [toolset-type]
+  (case toolset-type
+    :RNAfold
+    (or (getenv "RNAfold")
+        (fs/join viennadir "Progs")
+        (fs/join viennadir "bin"))
+    :RNAalifold
+    (or (getenv "RNAalifold")
+        (fs/join viennadir "Progs")
+        (fs/join viennadir "bin"))
+    :RNAdistance
+    (or (getenv "RNAdistance")
+        (fs/join viennadir "Progs")
+        (fs/join viennadir "bin"))
+    :RNAinverse
+    (or (getenv "RNAinverse")
+        (fs/join viennadir "Progs")
+        (fs/join viennadir "bin"))))
+
+(def ^{:private true} tools
+  ["RNAfold" "RNAalifold" "RNAdistance" "RNAinverse"])
+(def ^{:private true} tools-exist?
+  (assert-tools-exist (mapv #(fs/join (get-tool-path (keyword %))
+                                      %)
+                            tools)))
 
 (defn inverse-fold
   "Given a target structure, it will use RNAinverse to find n

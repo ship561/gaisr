@@ -148,3 +148,52 @@
 
 
 ;;;---------------------------------------------------
+
+;;;check if the generic robustness function is able to use calculate
+;;;the neutrality equivalently and to to compare the robustness of
+;;;using pcc vs subopt as a distance function
+(let [subopt (->> "/home/kitia/TMP/robustness-trainset3-test-subopt.0.out"
+                  read-clj
+                  (map second))
+      pcc (->> "/home/kitia/TMP/robustness-trainset3-test-pcc.0.out"
+               read-clj
+               (map second))
+      orig (into {} (read-clj "/home/kitia/TMP/robustness-trainset3-test.0.out"))]
+  (map (fn [entry]
+         (let [k (keyword (first entry))
+               data (subopt-robustness-summary entry)]
+           (->> (map (fn [d o]
+                       (let [xxx :wt];either :wt or :mut
+                         ;;interestingly the mutant neutrality is not equivalent
+                         #_(println (d xxx) (o xxx))
+                         ;;compare orig vs new neutrality 
+                         (equiv= (d xxx) (o xxx) 0.01)))
+                     (data :neutrality) 
+                     (get-in orig [k :neutrality]))
+                (every? true?))))
+       subopt)
+  (map (fn [entry]
+         (let [k (keyword (first entry))
+               data (subopt-robustness-summary entry)]
+           (->> (map (fn [d o]
+                       (let [xxx :wt]
+                         #_(println :d d :o o)
+                         ;;compare orig vs new robustness
+                         (= d o)))
+                     (data :robust?) 
+                     (get-in orig [k :robust?]))
+                (every? true?))))
+       subopt)
+  ;;compare distance metric robustness calls
+  (mapcat (fn [subopt-entry pcc-entry]
+            (let [subopt-data (subopt-robustness-summary subopt-entry)
+                  pcc-data (subopt-robustness-summary pcc-entry)
+                  k (keyword (first subopt-entry))]
+              (map (fn [s p o]
+                     (mapv #(if % 1 0) [s p o]))
+                   (subopt-data :robust?) 
+                   (pcc-data :robust?)
+                   (get-in orig [k :robust?]))))
+          subopt pcc))
+;;;compare subopt vs pcc {[1 1] 55, [0 1] 10, [1 0] 18, [0 0] 46}
+;;;compare subopt vs pcc vs orig {[1 1 1] 52, [0 1 0] 10, [1 0 1] 10, [0 0 0] 46, [1 0 0] 8, [1 1 0] 3}

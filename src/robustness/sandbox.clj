@@ -646,4 +646,33 @@
 
 
 
-
+;;;finding clusters of structures
+(time (let [n 1000
+                          s "AUAGCGUACAAAAAAAUCCCUCAUAUAAUUUUGGGAAUAUGGCCCAAAAGUCUCUACCCAAUAACCGUAAAUUAUUGGACUAUGAGGGAAAGGAUCUGUUUU"
+                          sts (as-> (fold s {:foldmethod :RNAsubopt :n n}) sts 
+                                    (interleave  sts (range n))
+                                    (partition 2 sts) 
+                                    (vec sts))
+                          dm (r/fold 50 (fn ([] {})
+                                       ([l r] (merge l r)))
+                                     (fn ([] {})
+                                       ([M [sti i]]
+                                          (as-> sts stj
+                                                (r/filter (fn [[_ j]] (< i j)) stj)
+                                                (r/map (fn [[stj j]]
+                                                         [[i j](bpdist sti stj :bpdist true)])
+                                                       stj)
+                                                (into {} stj)
+                                                (merge M stj))))
+                                     sts)]
+                            
+                      (io/with-out-writer "/home/kitia/TMP/dist.matrix"
+                        (doseq [i (range n)]
+                          (->> (map (fn [j]
+                                      (if (= i j)
+                                        0
+                                        (get dm [i j] (dm [j i])))) ;dist
+                                    (range n))
+                               (str/join "," )
+                               print)
+                          (println "")))))

@@ -68,7 +68,8 @@
    structures (neutrality)"
 
   [avg-subopt]
-  (let [data (remove nil? (second avg-subopt))
+  (let [nm (first avg-subopt)
+        data (remove nil? (second avg-subopt))
         rank (map (fn [[wt & muts]] ;rank each individual sequence
                     {:rank (-> (remove #(< % wt) muts)
                                count
@@ -79,14 +80,15 @@
                           {:wt wt :mut (mean muts)})
                         data)
         robustness (map (fn [m] (> (m :wt) (m :mut))) neutrality)]
-    {:wt (let [wt (first (transpose data))]
-           {:mean (-> wt mean) :sd (sd wt)})
-     :muts (let [muts (map rest data)]
-             {:mean (-> muts flatten mean)
-              :sd (-> (map variance muts) mean Math/sqrt)})
-     :rank rank
-     :neutrality neutrality
-     :robust? robustness}))
+    [nm
+     {:wt (let [wt (first (transpose data))]
+            {:mean (-> wt mean) :sd (sd wt)})
+      :muts (let [muts (map rest data)]
+              {:mean (-> muts flatten mean)
+               :sd (-> (map variance muts) mean Math/sqrt)})
+      :rank rank
+      :neutrality neutrality
+      :robust? robustness}]))
 
 (defn subopt-neutrality-seq
   "Find the subopt overlap of a seq and all its 1-mutant
@@ -222,19 +224,20 @@
      (doseq [instos (partition-all 2 infiles) 
              :let [cur (doall
                         (map (fn [insto]
-                               [(keyword insto)
-                                ;;list-of-lists average subopt overlap of 1-mut structures (neutrality)
-                                (-> insto
+                               (-> insto
                                     (generic-robustness-sto (opts :nseqs)
                                                             :invfile-ext (opts :invfile-ext)
                                                             :distfn (opts :distfn))
-                                    )
-                                #_(-> (subopt-robustness insto
-                                                       (opts :nseqs)
-                                                       :ncore (opts :ncore)
-                                                       :invfile-ext (opts :invfile-ext)
-                                                       :distfun (opts :distfn)) 
-                                    subopt-robustness-summary)])
+                                    subopt-robustness-summary)
+                               #_[(keyword insto)
+                                ;;list-of-lists average subopt overlap of 1-mut structures (neutrality)
+                                
+                                  (-> (subopt-robustness insto
+                                                         (opts :nseqs)
+                                                         :ncore (opts :ncore)
+                                                         :invfile-ext (opts :invfile-ext)
+                                                         :distfun (opts :distfn)) 
+                                      subopt-robustness-summary)])
                              instos))
                    data (if (and (fs/exists? ofile)
                                  (not (fs/empty? ofile)))

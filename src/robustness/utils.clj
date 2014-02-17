@@ -7,6 +7,9 @@
   (:use edu.bc.utils.fold-ops
         refold))
 
+(defn equiv= [x y delta]
+  (<= (- x delta) y (+ x delta)))
+
 (defn mutant-neighbor
   "Takes a string s and finds the 3L 1-mer mutants. String can only
    contain letters A, C, G, U. with-names returns a vector with the
