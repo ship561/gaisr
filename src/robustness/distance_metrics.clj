@@ -9,7 +9,7 @@
         edu.bc.utils.probs-stats
         edu.bc.utils.fold-ops                
         robustness.utils
-        ))
+        [slingshot.slingshot :only (try+ throw+)]))
 
 (def ^:dynamic *globals*
   {:nsamples 1000
@@ -136,9 +136,12 @@
         cons-keys (third df)
         [_ substruct] (suboptimals mut n :centroid-only false)
         dist (fn [st1 st2]
-               (/ (count (sets/intersection st1
-                                            (set (keys st2))))
-                  (count st1)))]
+               (if (zero? (count st1))
+                 (throw+ {:msg "no structure" :s (first df) :st (second df)})
+                 (/ (count (sets/intersection st1
+                                              (set (keys st2))))
+                    (count st1))
+                 ))]
     ;;takes percent overlap and
     ;;reduces it to a freqmap to
     ;;save memeory

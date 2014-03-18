@@ -6,13 +6,13 @@
             )
   (:use [clojure.tools.cli :only [cli]]
         edu.bc.bio.seq-utils
-        ;edu.bc.bio.sequtils.files
+                                        ;edu.bc.bio.sequtils.files
+        edu.bc.utils.fold-ops
         edu.bc.utils
         edu.bc.utils.probs-stats
         [edu.bc.bio.sequtils.snippets-files
          :only (read-sto change-parens sto->randsto read-clj
                          parse-dotps)]
-        edu.bc.utils.fold-ops
         robustness.utils
         robustness.distance-metrics
         ))
@@ -76,7 +76,7 @@
   [sto & {:keys [ncore nsubopt altname]
           :or {ncore 6 nsubopt 1000 altname sto}}]
   (let [{l :seqs cons :cons} (read-sto sto :info :both)
-        cons (change-parens (first cons))
+        cons (first cons)
         cores (quot ncore
                     (count l))
         cores (if (< cores 1) 1 cores)]
@@ -102,7 +102,7 @@
                   :or {ncore 6, nsubopt 1000,
                        altname sto, bp true}}]
   (let [{l :seqs cons :cons} (read-sto sto :info :both)
-        cons (change-parens (first cons))]
+        cons (first cons)]
     [altname                          ;return [filename data]
      (doall
       ;;go over each seq in the alignment
@@ -118,7 +118,7 @@
 
   [sto distfn]
   (let [{l :seqs cons :cons} (read-sto sto :info :both)
-        cons (change-parens (first cons))
+        cons (first cons)
         ]
     (as-> l data
           (r/map #(degap-conskeys (second %) cons) data) 

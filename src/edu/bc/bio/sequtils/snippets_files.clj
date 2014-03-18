@@ -13,13 +13,13 @@
         [slingshot.slingshot :only [throw+]]))
 
 (defn change-parens
-  "Change the stucture line to use (, ), and  isntead of <,>,-,and :"
+  "Change the stucture line to use (, ), and  isntead of <,>,-,_,and :"
   
   [struct]
   (->> struct
        (str/replace-re #"\<" "(") ;open
        (str/replace-re #"\>" ")" ) ;close
-       (str/replace-re #"\:|\-" "." ))) ;replace gaps
+       (str/replace-re #"\:|\-|_" "." ))) ;replace gaps
 
 (defn read-sto
   "read stockholm file creates a map where the key=name
@@ -30,10 +30,13 @@
   (let [[gc-lines seq-lines cons-lines] (join-sto-fasta-lines f "")
         cov (first (map #(last (str/split #"\s+" %))
                         (filter #(.startsWith % "#=GC cov_SS_cons") gc-lines)))
-        cl (map #(last (second %))
-                (filter #(.startsWith (first %) "#=GC SS_cons") cons-lines))
+        cl (->>  cons-lines
+                 (filter #(.startsWith (first %) "#=GC SS_cons"))
+                 (map #(-> % second last change-parens)))
         sl (reduce (fn [v [nm [_ sq]]]
-                     (let [sq (str/replace-re #"T" "U" (.toUpperCase sq))]
+                     (let [sq (as-> (.toUpperCase sq) s
+                                    (str/replace-re #"T" "U" s)
+                                    (str/replace-re #"\-" "." s))]
                        (case info
                          :both (conj v [nm sq])
                          :name (conj v nm)
