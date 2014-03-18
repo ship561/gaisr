@@ -102,9 +102,8 @@
                              :parse-fn #(Integer/parseInt %)
                              :default 0]
                             ["-fn" "--function" "function to call in code"
-                             :default "robustness/main-subopt-overlap"]
-                            ["-efn" "--extrafn" "function used as arguments in command ie
-                                                \"-dfn subopt-overlap-neighbors\""
+                             :default "robustness.neutrality/main-subopt-overlap"]
+                            ["-efn" "--extrafn" "function used as arguments in command ie \"-dfn subopt-overlap-neighbors\""
                              :default nil]
                             ["-n" "--partition-number" "number of partitions to make"
                              :parse-fn #(Integer/parseInt %)
