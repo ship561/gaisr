@@ -22,31 +22,33 @@
                     pfile
                     (throw+ {:file pfile} "parameter file not exist" ))))
 
-(defn get-tool-path [toolset-type]
-  (case toolset-type
-    :RNAfold
-    (or (getenv "RNAfold")
-        (fs/join viennadir "Progs")
-        (fs/join viennadir "bin"))
-    :RNAalifold
-    (or (getenv "RNAalifold")
-        (fs/join viennadir "Progs")
-        (fs/join viennadir "bin"))
-    :RNAdistance
-    (or (getenv "RNAdistance")
-        (fs/join viennadir "Progs")
-        (fs/join viennadir "bin"))
-    :RNAinverse
-    (or (getenv "RNAinverse")
-        (fs/join viennadir "Progs")
-        (fs/join viennadir "bin"))))
+(defn- get-tool-path
+  "Changes in the ViennaRNA file structure. This allows for trying to
+  create possible custom locations."
+
+  [toolset-type]
+  (let [path-loc (if (fs/exists? (fs/join viennadir "Progs"))
+                   (fs/join viennadir "Progs")
+                   (fs/join viennadir "bin"))]
+    (case toolset-type
+      :RNAfold
+      (or (getenv "RNAfold")
+          path-loc)
+      :RNAalifold
+      (or (getenv "RNAalifold")
+          path-loc)
+      :RNAdistance
+      (or (getenv "RNAdistance")
+          path-loc)
+      :RNAinverse
+      (or (getenv "RNAinverse")
+          path-loc))))
 
 (def ^{:private true} tools
   ["RNAfold" "RNAalifold" "RNAdistance" "RNAinverse"])
 (def ^{:private true} tools-exist?
-  (assert-tools-exist (mapv #(fs/join (get-tool-path (keyword %))
-                                      %)
-                            tools)))
+  (assert-tools-exist
+   (mapv #(fs/join (get-tool-path (keyword %)) %) tools)))
 
 (defn inverse-fold
   "Given a target structure, it will use RNAinverse to find n
