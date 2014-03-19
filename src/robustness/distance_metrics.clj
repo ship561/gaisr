@@ -11,11 +11,6 @@
         robustness.utils
         [slingshot.slingshot :only (try+ throw+)]))
 
-(def ^:dynamic *globals*
-  {:nsamples 1000
-   :ncore 6
-   :bpdist true})
-
 (defn bpsomething
   "uses the <1-d/L> method mentioned in Borenstein miRNA
   paper. Distance measured from given structure"
@@ -137,7 +132,10 @@
         [_ substruct] (suboptimals mut n :centroid-only false)
         dist (fn [st1 st2]
                (if (zero? (count st1))
-                 (throw+ {:msg "no structure" :s (first df) :st (second df)})
+                 (throw+ {:msg "no structure"
+                          :sto (*globals* :name)
+                          :s (first df)
+                          :st (second df)})
                  (/ (count (sets/intersection st1
                                               (set (keys st2))))
                     (count st1))

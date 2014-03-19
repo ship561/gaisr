@@ -7,6 +7,12 @@
   (:use edu.bc.utils.fold-ops
         refold))
 
+(def ^:dynamic *globals*
+  {:name ""
+   :nsamples 1000
+   :ncore 6
+   :bpdist true})
+
 (defn equiv= [x y delta]
   (<= (- x delta) y (+ x delta)))
 
@@ -46,6 +52,8 @@
 
   [[wt st conskeys]]
   [wt (mutant-neighbor wt) st conskeys])
+
+(defn foo [] (bar))
 
 (defn calculate-dist
 

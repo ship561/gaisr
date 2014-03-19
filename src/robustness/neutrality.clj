@@ -17,6 +17,8 @@
         robustness.distance-metrics
         ))
 
+
+
 (defn subopt-bpdist-seq
   "Uses RNAdistance to find the difference between 2 structures"
   
@@ -120,13 +122,14 @@
   (let [{l :seqs cons :cons} (read-sto sto :info :both)
         cons (first cons)
         ]
-    (as-> l data
-          (r/map #(degap-conskeys (second %) cons) data) 
-          (r/map build-mut-neighbors data)
-          (r/map #(calculate-dist % distfn) data)
-          (r/map mean data)
-          (into [] data)
-          [sto data])))
+    (with-redefs [*globals* (assoc *globals* :name (fs/basename sto))]
+      (as-> l data
+            (r/map #(degap-conskeys (second %) cons) data) 
+            (r/map build-mut-neighbors data)
+            (r/map #(calculate-dist % distfn) data)
+            (r/map mean data)
+            (into [] data)
+            [sto data]))))
 
 (defn main-subopt-overlap
   "Main function for determining neutrality of all sequences and their
