@@ -148,7 +148,7 @@
                             ["-o" "--outfile" "file to write to" :default nil]
                             ["-di" "--dir" "dir in which files are located"
                              :default nil]
-                            ["-dfn" "--distfn" "distance function" :parse-fn #(->> % symbol (ns-resolve 'robustness))
+                            ["-dfn" "--distfn" "distance function" :parse-fn #(->> % symbol (ns-resolve 'robustness.neutrality))
                              :default subopt-overlap-neighbors]
                             ["-nc" "--ncore" "number cores to use" :parse-fn #(Integer/parseInt %) :default 6]
                             ["-d" "--debug" "debug test"
@@ -164,7 +164,8 @@
                fsto)
         neutrality (for [sto stos] ;loop over stos
                                         ;(subopt-overlap-sto sto :ncore (opts :ncore))
-                     (generic-dist-sto sto (opts :distfn) :ncore (opts :ncore))
+                     ;;(generic-dist-sto sto (opts :distfn) :ncore (opts :ncore))
+                     (generic-dist-sto2 sto (opts :distfn))
                      )]
     (cond
      (or (nil? args) (opts :help)) (print usage) ;usage help
